@@ -1,0 +1,15 @@
+data/runtime/
+data/starter-corpus/originals/
+data/starter-corpus/metadata/*.repository-ocr.txt
+data/starter-corpus/qa/*.alto.xml
+data/starter-corpus/qa/*-sample-ocr.txt
+data/starter-corpus/qa/*.png
+evaluation/review_worksheet.json
+evaluation/review_worksheet.md
+evaluation/results.json
+.env
+production.env
+apps/frontend/node_modules/
+apps/frontend/dist/
+apps/frontend/.env.local
+.DS_Store

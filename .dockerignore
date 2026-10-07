@@ -1,0 +1,8 @@
+apps/frontend/node_modules
+apps/frontend/dist
+data/runtime
+data/starter-corpus
+.git
+.env
+production.env
+*.log

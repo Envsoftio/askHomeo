@@ -1,0 +1,74 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: homeopath
+      POSTGRES_USER: homeopath
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homeopath"]
+      interval: 3s
+      retries: 20
+  api:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    environment:
+      DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
+      REVIEWER_TOKEN: ${REVIEWER_TOKEN:-}
+      ADMIN_NAME: ${ADMIN_NAME:-Local administrator}
+      REVIEWER_NAME: ${REVIEWER_NAME:-Local reviewer}
+      AUTH_PRINCIPALS_JSON: ${AUTH_PRINCIPALS_JSON:-}
+      AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
+      AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
+      EMBEDDING_REVISION: ${EMBEDDING_REVISION:-nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_K_M.gguf}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
+      CHAT_REVISION: ${CHAT_REVISION:-qwen3-14b-local}
+    volumes:
+      - ./data/starter-corpus:/app/data/starter-corpus:ro
+      - ./data/runtime/assets:/app/data/runtime/assets
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    command: ["/app/server", "-mode", "worker"]
+    environment:
+      DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
+      AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
+      AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
+      EMBEDDING_REVISION: ${EMBEDDING_REVISION:-nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_K_M.gguf}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
+      CHAT_REVISION: ${CHAT_REVISION:-qwen3-14b-local}
+    volumes:
+      - ./data/starter-corpus:/app/data/starter-corpus:ro
+      - ./data/runtime/assets:/app/data/runtime/assets
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    ports:
+      - "127.0.0.1:8088:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+volumes:
+  pgdata:
