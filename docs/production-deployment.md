@@ -35,13 +35,9 @@ Create a GitHub environment named `production`, and add these secrets and variab
 | Secret | `DEPLOY_USER` | SSH deployment username |
 | Secret or variable | `DEPLOY_PORT` | SSH port; defaults to `22` (secret takes precedence) |
 | Variable | `DEPLOY_PATH` | Dedicated absolute app directory, e.g. `/home/deploy/askhomeo` |
-| Secret | `DEPLOY_KNOWN_HOSTS` | Verified server SSH host-key line(s) in OpenSSH known_hosts format |
-| Secret | `DEPLOY_SSH_KEY` | Dedicated unencrypted SSH private key; recommended |
-| Secret | `DEPLOY_PASSWORD` | Alternative SSH password if no private key is configured |
+| Secret | `DEPLOY_PASSWORD` | SSH deployment user's password |
 
-Install the matching public key in the deployment user's `~/.ssh/authorized_keys`. If both authentication secrets are supplied, the private key takes precedence. Password authentication must be enabled on the server to use `DEPLOY_PASSWORD`.
-
-Get the host-key fingerprint through your server provider's console and compare it with the key obtained by `ssh-keyscan -p 22 YOUR_HOST`. Save the verified scan output as `DEPLOY_KNOWN_HOSTS`. For a nonstandard port, retain the `[YOUR_HOST]:PORT` known_hosts prefix. The workflow requires strict host-key verification and does not trust a fresh scan during deployment.
+Password authentication must be enabled on the server. The workflow uses `sshpass` with `DEPLOY_PASSWORD` for both SSH and rsync, disables public-key authentication, and skips SSH host-key verification. No SSH key or known-hosts secret is required.
 
 Push these changes to `main`, then inspect **Actions → Deploy production**. The workflow requires an existing `production.env` before syncing. Rsync preserves all `data/` contents, `.env*` files, and `*.env` files, while removing obsolete application files. Containers must be healthy within 180 seconds after starting; the worker is checked for running state because it has no HTTP endpoint. A successful deploy checks the API through the frontend proxy, but does not exercise model calls or document ingestion.
 

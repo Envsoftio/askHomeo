@@ -52,8 +52,6 @@ jobs:
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || vars.DEPLOY_PORT || '22' }}
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
       SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
     steps:
       - name: Checkout
@@ -68,41 +66,21 @@ jobs:
           [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( 10#$DEPLOY_PORT >= 1 && 10#$DEPLOY_PORT <= 65535 )) || { echo 'Invalid DEPLOY_PORT'; exit 1; }
           # Use a dedicated app directory, never a home directory or filesystem root.
           [[ "$DEPLOY_PATH" =~ ^/(home/[a-zA-Z0-9_-]+|srv|opt)/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || { echo 'Set DEPLOY_PATH to a dedicated absolute app path under /home/USER, /srv, or /opt'; exit 1; }
-          [[ -n "$DEPLOY_KNOWN_HOSTS" ]] || { echo 'Set DEPLOY_KNOWN_HOSTS to the verified SSH host key'; exit 1; }
-          [[ -n "$DEPLOY_SSH_KEY" || -n "$SSHPASS" ]] || { echo 'Set DEPLOY_SSH_KEY or DEPLOY_PASSWORD'; exit 1; }
+          [[ -n "$SSHPASS" ]] || { echo 'Set DEPLOY_PASSWORD'; exit 1; }
 
       - name: Install deployment tools
         run: |
           sudo apt-get update
           sudo apt-get install -y sshpass rsync
 
-      - name: Configure SSH
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-          if [[ -n "$DEPLOY_SSH_KEY" ]]; then
-            printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
-            chmod 600 ~/.ssh/deploy_key
-          fi
-
       - name: Sync and deploy
         shell: bash
         run: |
           set -euo pipefail
-          ssh_options=(-p "$DEPLOY_PORT" -o StrictHostKeyChecking=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
-          auth=()
-          if [[ -n "$DEPLOY_SSH_KEY" ]]; then
-            ssh_options+=(-i "$HOME/.ssh/deploy_key" -o IdentitiesOnly=yes -o BatchMode=yes)
-          else
-            auth=(sshpass -e)
-            ssh_options+=(-o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no)
-          fi
+          ssh_options=(-p "$DEPLOY_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
           remote="$DEPLOY_USER@$DEPLOY_HOST"
-          "${auth[@]}" ssh "${ssh_options[@]}" "$remote" "mkdir -p '$DEPLOY_PATH' && test -f '$DEPLOY_PATH/production.env'"
-          printf -v rsync_ssh '%q ' "${auth[@]}" ssh "${ssh_options[@]}"
+          sshpass -e ssh "${ssh_options[@]}" "$remote" "mkdir -p '$DEPLOY_PATH' && test -f '$DEPLOY_PATH/production.env'"
+          printf -v rsync_ssh '%q ' sshpass -e ssh "${ssh_options[@]}"
           rsync -az --delete -e "$rsync_ssh" \
             --exclude '.git/' \
             --exclude '.github/' \
@@ -113,4 +91,4 @@ jobs:
             --exclude 'dist/' \
             --exclude '.DS_Store' \
             ./ "$remote:$DEPLOY_PATH/"
-          "${auth[@]}" ssh "${ssh_options[@]}" "$remote" "cd '$DEPLOY_PATH' && bash scripts/deploy-prod.sh"
+          sshpass -e ssh "${ssh_options[@]}" "$remote" "cd '$DEPLOY_PATH' && bash scripts/deploy-prod.sh"
