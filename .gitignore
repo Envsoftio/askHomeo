@@ -14,3 +14,4 @@ apps/frontend/dist/
 apps/frontend/.env.local
 .DS_Store
 .env.*
+!.env.prod.example

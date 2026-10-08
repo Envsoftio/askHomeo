@@ -10,16 +10,16 @@ Choose a dedicated directory under `/home/USER`, `/srv`, or `/opt`, for example 
 
 ```sh
 mkdir -p /home/deploy/askhomeo
-# Copy the repository's production.env.example to this server directory first.
+# Copy the repository's .env.prod.example to this server directory first.
 cd /home/deploy/askhomeo
-cp production.env.example production.env
-chmod 600 production.env
-# Edit production.env with actual passwords, tokens, and the DeepInfra API key.
+cp .env.prod.example .env.prod
+chmod 600 .env.prod
+# Edit .env.prod with actual passwords, tokens, and the DeepInfra API key.
 ```
 
-Use distinct random API and reviewer tokens of at least 24 characters. Use a URL-safe database password, for example one generated with `openssl rand -hex 32`. App credentials live only in `production.env` on the server; the workflow preserves this file and does not upload app credentials from GitHub. Changing `POSTGRES_PASSWORD` in the file does not update a password in an already initialized database: rotate the database role password as well.
+Use distinct random API and reviewer tokens of at least 24 characters. Use a URL-safe database password, for example one generated with `openssl rand -hex 32`. App credentials live only in `.env.prod` on the server; the workflow preserves this file and does not upload app credentials from GitHub. Changing `POSTGRES_PASSWORD` in the file does not update a password in an already initialized database: rotate the database role password as well.
 
-Keep ports 5437, 8080, and 8088 free, or choose three distinct ports in `production.env`. These defaults differ from standard PostgreSQL's port so another host database can coexist. This configuration needs host ports above 1023 because it drops all capabilities and runs as non-root. Host networking shares the server's network namespace: omitting `ports` does not hide listeners. PostgreSQL binds to `127.0.0.1:5437`, and the API to `127.0.0.1:8080`; the worker has no listener. See Docker's [host networking and service settings](https://docs.docker.com/reference/compose-file/services/#network_mode).
+Keep ports 5437, 8080, and 8088 free, or choose three distinct ports in `.env.prod`. These defaults differ from standard PostgreSQL's port so another host database can coexist. This configuration needs host ports above 1023 because it drops all capabilities and runs as non-root. Host networking shares the server's network namespace: omitting `ports` does not hide listeners. PostgreSQL binds to `127.0.0.1:5437`, and the API to `127.0.0.1:8080`; the worker has no listener. See Docker's [host networking and service settings](https://docs.docker.com/reference/compose-file/services/#network_mode).
 
 The frontend defaults to `127.0.0.1:8088`. Put a host reverse proxy with your domain and TLS certificate in front of `http://127.0.0.1:8088`, and allow inbound 80/443 and SSH in the server firewall. To serve the frontend directly instead, set `FRONTEND_BIND_ADDR=0.0.0.0` and allow inbound `FRONTEND_PORT`; this serves HTTP, so use an HTTPS proxy for public production access. Neither the API nor PostgreSQL needs an inbound firewall rule.
 
@@ -39,7 +39,7 @@ Create a GitHub environment named `production`, and add these secrets and variab
 
 Password authentication must be enabled on the server. The workflow uses `sshpass` with `DEPLOY_PASSWORD` for both SSH and rsync, disables public-key authentication, and skips SSH host-key verification. No SSH key or known-hosts secret is required.
 
-Push these changes to `main`, then inspect **Actions → Deploy production**. The workflow requires an existing `production.env` before syncing. Rsync preserves all `data/` contents, `.env*` files, and `*.env` files, while removing obsolete application files. Containers must be healthy within 180 seconds after starting; the worker is checked for running state because it has no HTTP endpoint. A successful deploy checks the API through the frontend proxy, but does not exercise model calls or document ingestion.
+Push these changes to `main`, then inspect **Actions → Deploy production**. The workflow requires an existing `.env.prod` before syncing. Rsync preserves all `data/` contents, `.env*` files, and `*.env` files, while removing obsolete application files. Containers must be healthy within 180 seconds after starting; the worker is checked for running state because it has no HTTP endpoint. A successful deploy checks the API through the frontend proxy, but does not exercise model calls or document ingestion.
 
 ## Operations and persistent data
 
@@ -48,7 +48,7 @@ For a manual deployment or retry on the server:
 ```sh
 cd /home/deploy/askhomeo
 bash scripts/deploy-prod.sh
-docker compose -f docker-compose.prod.yml --env-file production.env logs --tail 100
+docker compose -f docker-compose.prod.yml --env-file .env.prod logs --tail 100
 ```
 
 The fixed Compose project name is `askhomeo-prod`. Its named volumes are `askhomeo-prod_pgdata` (PostgreSQL) and `askhomeo-prod_assets` (uploaded PDFs). New volumes initialize with the image's non-root ownership: PostgreSQL UID 999 and app UID 10001. Images and code can be replaced without removing these volumes. Do not run `docker compose down -v` against production. Maintain backups of both volumes and the private environment file before deploying changes that migrate the database.

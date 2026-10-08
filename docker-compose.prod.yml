@@ -25,10 +25,10 @@ x-backend: &backend
     - assets:/app/data/runtime/assets
     - ./data/starter-corpus:/app/data/starter-corpus:ro
   environment: &backend-env
-    DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in production.env}@127.0.0.1:${POSTGRES_PORT:-5437}/homeopath?sslmode=disable
+    DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}@127.0.0.1:${POSTGRES_PORT:-5437}/homeopath?sslmode=disable
     AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
     AI_BASE_URL: ${AI_BASE_URL:-https://api.deepinfra.com/v1/openai}
-    DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?Set DEEPINFRA_API_KEY in production.env}
+    DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?Set DEEPINFRA_API_KEY in .env.prod}
     EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
     EMBEDDING_REVISION: ${EMBEDDING_REVISION:-deepinfra-bge-m3-unpinned}
     EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
@@ -44,7 +44,7 @@ services:
     environment:
       POSTGRES_DB: homeopath
       POSTGRES_USER: homeopath
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in production.env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -65,7 +65,7 @@ services:
     environment:
       <<: *backend-env
       API_ADDR: 127.0.0.1:${API_PORT:-8080}
-      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in production.env}
+      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env.prod}
       REVIEWER_TOKEN: ${REVIEWER_TOKEN:-}
       ADMIN_NAME: ${ADMIN_NAME:-Administrator}
       REVIEWER_NAME: ${REVIEWER_NAME:-Reviewer}
