@@ -14,3 +14,10 @@ func TestQuestionTermsDoNotSpecialCaseSourceOrTopic(t *testing.T) {
 		t.Fatalf("single user term was dropped: %v", got)
 	}
 }
+
+func TestQuestionTermsKeepLaterResearchTopics(t *testing.T) {
+	got := strings.Join(queryTerms("In the selected study, what condition and homeopathic intervention were tested, how was the comparison group treated, and what were the main results? Cite the pages supporting each point and note any limitations the authors report."), " | ")
+	if !strings.Contains(got, "results") || !strings.Contains(got, "limitations") || strings.Contains(got, "selected") || strings.Contains(got, "cite") {
+		t.Fatalf("research terms lost or cluttered: %s", got)
+	}
+}

@@ -28,6 +28,7 @@ const question=ref(''),answer=ref(''),answerStatus=ref(''),citations=ref<AnswerC
 const validQuestion=computed(()=>/[\p{L}\p{N}]{3,}/u.test(question.value))
 const researchMode=ref<'quick'|'deep'>('quick')
 const sourceSelectionMode=ref<'all'|'selected'>('all'),selectedSourceIds=ref<string[]>([])
+const asksAboutSelectedSource=computed(()=>/\bselected (study|paper|source)\b/i.test(question.value))
 const searches=ref<SearchRecord[]>([])
 const evidence=ref<EvidenceRecord[]>([])
 const citedEvidence=computed(()=>evidence.value.filter(item=>item.cited))
@@ -61,7 +62,7 @@ const sourceRows=computed(()=>{
  }
  return [...grouped.values()]
 })
-type IndexStatus={status:string,model:string,completed:number,total:number,error:string,can_retry:boolean}
+type IndexStatus={status:string,model:string,completed:number,total:number,error:string,can_retry:boolean,matches_config:boolean}
 const index=ref<IndexStatus|null>(null),indexBySource=ref<Record<string,IndexStatus>>({})
 const connectionError=ref(''),actionError=ref(''),busy=ref(false)
 const session=ref<{name:string,role:string}|null>(null),sessionLoading=ref(true),accessToken=ref(''),signInError=ref(''),signingIn=ref(false),requiredRole=ref<''|'admin'>('')
@@ -91,7 +92,7 @@ async function syncSession(){
 const readySources=computed(()=>sources.value.filter(s=>s.status==='published'&&!s.superseded&&indexBySource.value[s.id]?.status==='ready'))
 const activeCandidate=computed(()=>active.value?sources.value.find(s=>s.supersedes_source_id===active.value?.id&&s.status!=='failed'&&s.status!=='disabled'):null)
 const readyCount=computed(()=>readySources.value.length)
-const selectionValid=computed(()=>sourceSelectionMode.value==='all'||selectedSourceIds.value.length>0&&selectedSourceIds.value.every(id=>readySources.value.some(s=>s.id===id)))
+const selectionValid=computed(()=>sourceSelectionMode.value==='all'?!asksAboutSelectedSource.value:selectedSourceIds.value.length>0&&(!asksAboutSelectedSource.value||selectedSourceIds.value.length===1)&&selectedSourceIds.value.every(id=>readySources.value.some(s=>s.id===id)))
 const reviewReady=computed(()=>detail.value?.status==='review'&&!detail.value?.retraction_notice_url)
 const publicationNeeds=computed(()=>{
  const d=detail.value
@@ -207,7 +208,7 @@ function publish(){if(!active.value)return;run(async()=>{await api(`/sources/${a
 function retryIndex(){if(!active.value)return;run(async()=>{await api(`/sources/${active.value!.id}/reindex`,{method:'POST'})})}
 function reprocessSource(){if(!active.value)return;run(async()=>{const result=await api<{source_id:string}>(`/sources/${active.value!.id}/reprocess`,{method:'POST'});await refresh();const candidate=sources.value.find(s=>s.id===result.source_id);if(candidate)await chooseSource(candidate)})}
 function setSourceAccess(enable:boolean){if(!active.value||sourceAccessReason.value.trim().length<8)return;run(async()=>{await api(`/sources/${active.value!.id}/${enable?'enable':'disable'}`,{method:'POST',body:JSON.stringify({reason:sourceAccessReason.value.trim()})});sourceAccessReason.value=''})}
-function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='selected'&&!selectedSourceIds.value.length)selectedSourceIds.value=readySources.value.map(s=>s.id)}
+function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='selected'&&asksAboutSelectedSource.value&&selectedSourceIds.value.length!==1)selectedSourceIds.value=[]}
 function showAnswer(result:SavedAnswer,openAsk=true){
  answer.value=result.answer;answerStatus.value=result.status;citations.value=result.citations;searches.value=result.searches||[];evidence.value=result.evidence||[];sections.value=result.sections||[];omittedClaims.value=result.omitted_claim_count||0
  claimChecks.value=[];api<{claims:ClaimCheck[]}>(`/research/answers/${result.answer_id}/claims`).then(data=>{claimChecks.value=data.claims}).catch(()=>{})
@@ -318,7 +319,7 @@ onUnmounted(()=>{
     <p v-if="active.status==='queued'||active.status==='processing'">Reading scanned pages: {{active.pages_read}} of {{active.pages_total}}. You can leave this screen and return.</p>
     <p v-else-if="active.status==='failed'" class="error">We couldn’t finish reading this book. Your original PDF is saved. {{active.error}}</p>
     <p v-else-if="active.status==='review'&&!detail?.retraction_notice_url">The system checks the text against the scans. Only uncertain pages need your decision.</p>
-    <div v-else-if="active.status==='published'" class="step"><p v-if="index?.status==='ready'" class="good">Ready to ask. {{index.completed}} of {{index.total}} passages prepared with {{index.model}}. <button @click="openAskTab">Ask about it</button></p><p v-else-if="index?.status==='pending'||index?.status==='running'">Preparing passages for search: {{index.completed}} of {{index.total}}. This continues in the background.</p><p v-else-if="index?.status==='failed'" class="error">Preparation stopped after {{index.completed}} of {{index.total}} passages: {{index.error}} <button v-if="session.role==='admin'" @click="retryIndex">Try again</button></p><p v-else>Passages have not been prepared. <button v-if="session.role==='admin'" @click="retryIndex">Prepare now</button></p></div>
+    <div v-else-if="active.status==='published'" class="step"><p v-if="index?.status==='ready'&&index.matches_config" class="good">Ready to ask. {{index.completed}} of {{index.total}} passages prepared with {{index.model}}. <button @click="openAskTab">Ask about it</button></p><p v-else-if="index?.status==='ready'" class="error">This source was prepared with {{index.model}}, which differs from the configured embedding model. <button v-if="session.role==='admin'" :disabled="busy" @click="retryIndex">Reindex with current model</button></p><p v-else-if="index?.status==='pending'||index?.status==='running'">Preparing passages for search: {{index.completed}} of {{index.total}}. This continues in the background.</p><p v-else-if="index?.status==='failed'" class="error">Preparation stopped after {{index.completed}} of {{index.total}} passages: {{index.error}} <button v-if="session.role==='admin'" @click="retryIndex">Try again</button></p><p v-else>Passages have not been prepared. <button v-if="session.role==='admin'" @click="retryIndex">Prepare now</button></p></div>
 
     <div v-if="detail?.supersedes_source_id" class="step"><h3>Candidate revision</h3><p>This copy is being processed from the saved PDF. The current publication remains available for questions until this copy passes review and its passages are READY.</p><button v-if="sources.find(source=>source.id===detail?.supersedes_source_id)" @click="chooseSource(sources.find(source=>source.id===detail?.supersedes_source_id)!)">View current source</button></div>
     <div v-if="active.status==='published'" class="step"><h3>Processing revision</h3><p v-if="detail?.superseded">This source has been replaced for new searches. Its saved citations still open the original pages.</p><p v-else-if="activeCandidate">A candidate revision is in progress. The current source stays available until the candidate is ready.</p><p v-else>Create a new candidate from this saved PDF when page extraction or metadata needs a fresh review. The current answer evidence stays available while it runs.</p><button v-if="session.role==='admin'&&!detail?.superseded&&!activeCandidate" :disabled="busy" @click="reprocessSource">Reprocess saved PDF</button></div>
@@ -353,7 +354,7 @@ onUnmounted(()=>{
    <form v-else @submit.prevent="ask">
     <label for="question">Your question</label><textarea id="question" v-model="question" rows="3" maxlength="1000" placeholder="How do Nash and Farrington describe Lachesis?"/>
     <p v-if="question.trim()&&!validQuestion" class="input-hint">Add a topic or remedy name with at least 3 letters, such as “mood” or “Nux”.</p>
-    <fieldset class="source-picker"><legend>Sources to search</legend><label><input type="radio" name="source-mode" :checked="sourceSelectionMode==='all'" @change="setSourceSelectionMode('all')" /> All {{readyCount}} prepared sources</label><label><input type="radio" name="source-mode" :checked="sourceSelectionMode==='selected'" @change="setSourceSelectionMode('selected')" /> Choose sources</label><div v-if="sourceSelectionMode==='selected'" class="source-options"><label v-for="source in readySources" :key="source.id"><input v-model="selectedSourceIds" type="checkbox" :value="source.id" /><span><strong>{{source.title}}</strong><br />{{source.author}}</span></label><p>{{selectedSourceIds.length}} selected</p><p v-if="!selectionValid" class="input-hint">Select at least one prepared source. Refresh if a source is no longer ready.</p></div></fieldset>
+    <fieldset class="source-picker"><legend>Sources to search</legend><label><input type="radio" name="source-mode" :checked="sourceSelectionMode==='all'" @change="setSourceSelectionMode('all')" /> All {{readyCount}} prepared sources</label><label><input type="radio" name="source-mode" :checked="sourceSelectionMode==='selected'" @change="setSourceSelectionMode('selected')" /> Choose sources</label><div v-if="sourceSelectionMode==='selected'" class="source-options"><label v-for="source in readySources" :key="source.id"><input v-model="selectedSourceIds" type="checkbox" :value="source.id" /><span><strong>{{source.title}}</strong><br />{{source.author}}</span></label><p>{{selectedSourceIds.length}} selected</p><p v-if="!selectionValid&&!asksAboutSelectedSource" class="input-hint">Select at least one prepared source. Refresh if a source is no longer ready.</p></div><p v-if="asksAboutSelectedSource&&!selectionValid" class="input-hint">Your question refers to one selected source. Choose sources and select exactly one paper.</p></fieldset>
     <label for="research-mode">Research depth</label><select id="research-mode" v-model="researchMode"><option value="quick">Quick answer · one search per source</option><option value="deep">Detailed research · three focused searches</option></select>
     <button :disabled="busy||!validQuestion||!selectionValid">{{busy?'Saving question…':researchMode==='deep'?'Research in detail':'Ask'}}</button>
    </form>

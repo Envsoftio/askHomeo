@@ -18,12 +18,13 @@ func (w *Worker) embed(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	}
 	var runID, configID uuid.UUID
 	var expected int
-	var modelID string
-	if e := w.Store.DB.QueryRow(ctx, `SELECT ir.id,ir.embedding_config_id,ir.expected_chunk_count,ec.model_id FROM embedding_jobs ej JOIN index_runs ir ON ir.id=ej.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id WHERE ej.job_id=$1`, jobID).Scan(&runID, &configID, &expected, &modelID); e != nil {
+	var modelID, modelRevision string
+	var modelDimensions int
+	if e := w.Store.DB.QueryRow(ctx, `SELECT ir.id,ir.embedding_config_id,ir.expected_chunk_count,ec.model_id,ec.model_revision,ec.dimensions FROM embedding_jobs ej JOIN index_runs ir ON ir.id=ej.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id WHERE ej.job_id=$1`, jobID).Scan(&runID, &configID, &expected, &modelID, &modelRevision, &modelDimensions); e != nil {
 		return e
 	}
-	if modelID != w.Model.Config.EmbeddingModel {
-		return errors.New("configured embedding model differs from index snapshot")
+	if modelID != w.Model.Config.EmbeddingModel || modelRevision != w.Model.Config.EmbeddingRevision || modelDimensions != w.Model.Config.Dimensions {
+		return errors.New("configured embedding model or revision differs from index snapshot")
 	}
 	models, e := w.Model.Models(ctx)
 	if e != nil {
@@ -36,23 +37,44 @@ func (w *Worker) embed(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	if e != nil {
 		return e
 	}
-	var chunkID uuid.UUID
-	var passage string
-	e = w.Store.DB.QueryRow(ctx, `SELECT c.id,c.text_exact FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800 AND NOT EXISTS(SELECT 1 FROM chunk_embeddings ce WHERE ce.chunk_id=c.id AND ce.embedding_config_id=$2) ORDER BY p.pdf_page_index,c.chunk_index LIMIT 1`, sourceID, configID).Scan(&chunkID, &passage)
-	if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+	batchSize := 1
+	if w.Model.Config.EmbeddingProvider != "lmstudio" {
+		batchSize = 16
+	}
+	rows, e := w.Store.DB.Query(ctx, `SELECT c.id,c.text_exact FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800 AND NOT EXISTS(SELECT 1 FROM chunk_embeddings ce WHERE ce.chunk_id=c.id AND ce.embedding_config_id=$2) ORDER BY p.pdf_page_index,c.chunk_index LIMIT $3`, sourceID, configID, batchSize)
+	if e != nil {
 		return e
 	}
-	if e == nil {
+	var chunkIDs []uuid.UUID
+	var passages []string
+	for rows.Next() {
+		var chunkID uuid.UUID
+		var passage string
+		if e = rows.Scan(&chunkID, &passage); e != nil {
+			rows.Close()
+			return e
+		}
+		chunkIDs = append(chunkIDs, chunkID)
+		passages = append(passages, "search_document: "+passage)
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil {
+		return e
+	}
+	if len(passages) > 0 {
 		step, cancel := context.WithTimeout(ctx, 60*time.Second)
-		v, err := w.Model.Embed(step, "search_document: "+passage)
+		vectors, err := w.Model.EmbedBatch(step, passages)
 		cancel()
 		if err != nil {
 			return err
 		}
-		h := sha256.Sum256([]byte(w.Model.EmbeddingInput("search_document: " + passage)))
-		_, err = w.Store.DB.Exec(ctx, `INSERT INTO chunk_embeddings(chunk_id,embedding_config_id,embedding,input_hash) VALUES($1,$2,$3::vector,$4) ON CONFLICT(chunk_id,embedding_config_id) DO NOTHING`, chunkID, configID, localllm.Vector(v), hex.EncodeToString(h[:]))
-		if err != nil {
-			return err
+		for i, vector := range vectors {
+			h := sha256.Sum256([]byte(w.Model.EmbeddingInput(passages[i])))
+			_, err = w.Store.DB.Exec(ctx, `INSERT INTO chunk_embeddings(chunk_id,embedding_config_id,embedding,input_hash) VALUES($1,$2,$3::vector,$4) ON CONFLICT(chunk_id,embedding_config_id) DO NOTHING`, chunkIDs[i], configID, localllm.Vector(vector), hex.EncodeToString(h[:]))
+			if err != nil {
+				return err
+			}
 		}
 	}
 	var done, actual int

@@ -423,6 +423,15 @@ func (a *API) runOneAnswerJob(ctx context.Context) error {
 	if rec.Code == 503 {
 		code = "model_unavailable"
 		message = "The configured AI connection or model is unavailable. Check the model provider and try again."
+		if strings.Contains(response.Error, `finish_reason="length"`) {
+			code = "model_output_limit"
+			message = "The model ran out of output tokens before completing its answer. Reduce reasoning effort or increase CHAT_MAX_TOKENS."
+			retry = false
+		}
+		if strings.Contains(strings.ToLower(response.Error), "temporarily overloaded") || strings.Contains(strings.ToLower(response.Error), "rate limit") || strings.Contains(response.Error, "HTTP 429") {
+			code = "provider_busy"
+			message = "The hosted model is busy or rate limited. Retrying automatically."
+		}
 	}
 	if rec.Code == 409 {
 		code = "source_unavailable"
@@ -465,6 +474,9 @@ func (a *API) failAnswerJob(ctx context.Context, id uuid.UUID, code, message str
 	status, stage, kind := "failed", "Needs your attention", "failed"
 	if retry && attempts < 3 {
 		status, stage, kind = "retrying", "Waiting to retry", "retrying"
+	}
+	if status == "failed" && code == "provider_busy" {
+		message = "The hosted model is busy or rate limited. Try again when it is available."
 	}
 	_, err = tx.Exec(ctx, `UPDATE answer_jobs SET status=$2,stage=$3,error_code=$4,error_message=$5,run_after=now()+($6::int * interval '1 minute'),lease_until=NULL,updated_at=now() WHERE id=$1`, id, status, stage, code, message, attempts*attempts)
 	if err == nil {

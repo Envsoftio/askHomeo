@@ -2,21 +2,47 @@
 
 ## Run
 
-1. Copy `.env.example` to `.env` and set a random `API_TOKEN` of at least 24 characters. Keep the file private.
-2. Start the local LM Studio server with the chat and embedding models named in `.env`. For Docker Compose, use `AI_BASE_URL=http://host.docker.internal:1234/v1`.
-3. Run `docker compose up --build` from this directory and open <http://127.0.0.1:8088>. Sign in with the administrator or reviewer token from `.env`.
+1. Copy `.env.example` to `.env`, set a random `API_TOKEN` of at least 24 characters, and set `OPENROUTER_API_KEY`. Keep the file private.
+2. The local example uses OpenRouter for both chat and embeddings. No local model server is needed.
+3. Run `docker compose --profile dev up --build` from this directory and open <http://127.0.0.1:8088>. Sign in with the administrator or reviewer token from `.env`.
 
-`AI_PROVIDER=lmstudio` is the development default. The API and worker use the local LM Studio chat and Nomic embedding models.
+For local database inspection, open Adminer at <http://127.0.0.1:8089>. Select **PostgreSQL** and use server `db`, username `homeopath`, database `homeopath`, and the `POSTGRES_PASSWORD` from `.env` (or `localdev` if unset). Adminer starts only with the `dev` Compose profile.
+
+For an existing `.env`, configure both hosted endpoints:
+
+```dotenv
+CHAT_PROVIDER=openrouter
+EMBEDDING_PROVIDER=openrouter
+OPENROUTER_API_KEY=replace-with-your-openrouter-api-key
+CHAT_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
+EMBEDDING_MODEL=baai/bge-m3
+EMBEDDING_INPUT_STYLE=plain
+EMBEDDING_REVISION=openrouter-baai-bge-m3-unpinned
+EMBEDDING_DIMENSIONS=1024
+CHAT_MAX_TOKENS=4096
+CHAT_REASONING_EFFORT=none
+MODEL_REQUEST_TIMEOUT_SECONDS=300
+```
+
+After adding your real key, run `docker compose --profile dev up -d --build api worker` to apply the settings. If the database already contains sources indexed with Nomic, reindex each published source using **Sources → Reindex** (or `POST /api/v1/sources/{id}/reindex` as an administrator) and wait for READY before asking questions. The worker batches hosted embeddings during reindexing.
+
+The free Nemotron endpoint can be temporarily overloaded or rate limited. The app retries transient chat responses and shows a provider-busy state in Activity when a question must be retried. `CHAT_REASONING_EFFORT=none` leaves the output budget for the evidence table; another model may need a different effort setting or no reasoning setting. A short answer may still take a few minutes because citation checks call the model after retrieval.
+
+`CHAT_PROVIDER` and `EMBEDDING_PROVIDER` are independent. Change `CHAT_MODEL` to any OpenRouter chat model ID to compare LLMs without changing the search index; `nvidia/nemotron-3-ultra-550b-a55b:free` is only an example. Both the API and worker need the same settings, and the OpenRouter key stays in their server-side environment. If you change the embedding model, provider, or input style, set its matching `EMBEDDING_DIMENSIONS` and a new `EMBEDDING_REVISION`, then reindex prepared sources before asking questions. An existing Nomic index cannot be searched with another embedding model.
+
+The [OpenRouter chat](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request) and [embeddings](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings) endpoints both use the same API key. The example model IDs are [Nemotron 3 Ultra (free)](https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free) and [bge-m3](https://openrouter.ai/baai/bge-m3).
+
+`CHAT_PROVIDER` and `EMBEDDING_PROVIDER` accept `lmstudio`, `openrouter`, `deepinfra`, or `openai`. For another OpenAI-compatible service, use `openai` with the corresponding `CHAT_BASE_URL`/`CHAT_API_KEY` or `EMBEDDING_BASE_URL`/`EMBEDDING_API_KEY`. `AI_PROVIDER` and `AI_BASE_URL` remain fallbacks for existing configurations. `CHAT_MAX_TOKENS` controls the output limit, `CHAT_REASONING_EFFORT` is optional for reasoning models, `MODEL_REQUEST_TIMEOUT_SECONDS` sets the provider request timeout (120 seconds by default), and `CHAT_PROMPT_SUFFIX` is available for a model-specific suffix if needed; the application does not append one automatically. `EMBEDDING_INPUT_STYLE` can be `plain` or `prefixed` for embedding models with different query/document input conventions. If no revision is provided, the app records a provider/model-specific `unpinned` marker.
 
 ## Production model provider
 
-Copy `production.env.example` to `production.env` on the server, replace its credentials, and run `docker compose --env-file production.env up --build -d`. Set `AI_PROVIDER=deepinfra` in that file. The API and worker then use DeepInfra over HTTPS for `openai/gpt-oss-120b` chat and `BAAI/bge-m3` embeddings; LM Studio is not required. The DeepInfra key stays in server environment variables and is never sent to the browser. The provider's model aliases are marked `unpinned` in saved revision metadata because DeepInfra does not expose immutable weight revisions for these endpoints. This configuration uses DeepInfra's [OpenAI-compatible chat](https://deepinfra.com/openai/gpt-oss-120b/api) and [embedding](https://deepinfra.com/BAAI/bge-m3/api) APIs.
+Copy `production.env.example` to `production.env` on the server, replace its credentials, and run `docker compose --env-file production.env up --build -d`. This example uses OpenRouter over HTTPS for both chat and embeddings, with no LM Studio process on the server. Set the exact `CHAT_MODEL` ID you want to evaluate. The key is passed only to the API and worker containers, never to the browser.
 
 The production embedding model produces 1,024-dimensional vectors and is incompatible with the development Nomic index. For an existing database, call `POST /api/v1/sources/{id}/reindex` as an administrator for every published source after switching providers, and wait until all sources are READY before asking questions. New sources are indexed with the configured model when published. Do not mix sources prepared under the two embedding models in one answer. Run the held-out evaluation with human citation review before treating the hosted setup as release-ready.
 
 The Compose UI port is bound to localhost. A public deployment also needs an HTTPS reverse proxy, backups for the PostgreSQL volume and PDF assets, and server-managed credentials. Use a URL-safe random `POSTGRES_PASSWORD` so it can be interpolated into the database URL. The sample Compose defaults remain for local development only.
 
-Compose starts PostgreSQL, the Go API, the ingestion/embedding worker, and the Vue UI. PDF assets are saved in `data/runtime/assets`; the database uses the `pgdata` volume. The starter corpus is mounted read-only. For local testing, the browser uses a long-lived HttpOnly session cookie that renews on authenticated requests and is cleared by Sign out. The proxy does not grant administrator access automatically. Set `ADMIN_NAME` and `REVIEWER_NAME` to identify the two default users. For more people, set `AUTH_PRINCIPALS_JSON` as shown in `.env.example`, with a stable UUID and distinct token for each; when that list is set, its tokens replace the two default sign-in tokens. Reviewer answer jobs and Activity are private to that reviewer; administrators can inspect all jobs.
+Compose starts PostgreSQL, the Go API, the ingestion/embedding worker, and the Vue UI. Docker sets the backend project root and internal database URL; they do not need entries in `.env`. PDF assets are saved in `data/runtime/assets`; the database uses the `pgdata` volume. The starter corpus is mounted read-only. For local testing, the browser uses a long-lived HttpOnly session cookie that renews on authenticated requests and is cleared by Sign out. The proxy does not grant administrator access automatically. Set `ADMIN_NAME` and `REVIEWER_NAME` to identify the two default users. For more people, set `AUTH_PRINCIPALS_JSON` as shown in `.env.example`, with a stable UUID and distinct token for each; when that list is set, its tokens replace the two default sign-in tokens. Reviewer answer jobs and Activity are private to that reviewer; administrators can inspect all jobs.
 
 In **Sources**, search Internet Archive by book title or author, inspect a catalogue record and its listed PDFs, then choose **Download for review**. The app saves the PDF and catalogue link and queues normal page and rights checks. A repository record may have no eligible PDF or no rights statement; the admin must check rights before publishing. You can also enter a DOI, upload a PDF, or paste a direct public HTTPS PDF link. Title and author are optional for PDF intake: the app reads the opening pages and uses OCR when needed to fill available details, including edition, publication, repository and catalogue URL when it finds them. Review the detected details before publication; unreadable fields stay marked for correction. User-entered values take priority. Uploads and linked PDFs have a 250 MB limit. Linked PDFs are downloaded to local storage and enter the same page-reading queue as uploads; a catalogue page or DOI landing page is not a direct PDF link. DOI lookup fills a reference from Crossref (or DataCite when Crossref has no record) without storing a PDF. A direct DOI PDF import is offered when Crossref reports an HTTPS PDF link and a supported Creative Commons licence for the matching version. The connector also recognizes the verified PLOS ONE printable PDF route for eligible `10.1371/journal.pone.*` DOIs. Other DOIs without a usable route remain reference-only until a permitted PDF is uploaded or linked. Reference-only records are never searched or cited as page evidence. **Delete reference** removes a saved DOI reference from the list; when a PDF source is already linked, its DOI provenance and source remain stored.
 

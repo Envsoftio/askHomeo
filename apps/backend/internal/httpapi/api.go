@@ -698,7 +698,7 @@ func Token() string { return os.Getenv("API_TOKEN") }
 var words = regexp.MustCompile(`[A-Za-z]+`)
 
 func queryTerms(q string) []string {
-	stop := map[string]bool{"which": true, "what": true, "does": true, "with": true, "about": true, "from": true, "there": true, "these": true, "those": true, "the": true, "and": true, "for": true, "how": true, "page": true, "inspected": true}
+	stop := map[string]bool{"which": true, "what": true, "does": true, "with": true, "about": true, "from": true, "there": true, "these": true, "those": true, "the": true, "and": true, "for": true, "how": true, "was": true, "are": true, "its": true, "their": true, "this": true, "that": true, "each": true, "any": true, "page": true, "pages": true, "inspected": true, "selected": true, "were": true, "main": true, "cite": true, "supporting": true, "point": true, "note": true, "authors": true, "report": true}
 	out := []string{}
 	seen := map[string]bool{}
 	for _, word := range words.FindAllString(strings.ToLower(q), -1) {
@@ -707,7 +707,7 @@ func queryTerms(q string) []string {
 		}
 		seen[word] = true
 		out = append(out, word)
-		if len(out) == 8 {
+		if len(out) == 16 {
 			break
 		}
 	}

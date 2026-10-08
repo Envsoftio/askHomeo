@@ -46,3 +46,28 @@ func TestEvidenceFirstDraftIgnoresTrailingCommentary(t *testing.T) {
 		t.Fatalf("unexpected draft: %q labels=%v omitted=%d err=%v", answer, labels, omitted, err)
 	}
 }
+
+func TestRecoverPassageQuoteKeepsExactOCRExcerpt(t *testing.T) {
+	passage := "吀؀e evidence generated in this SR is based on 6 MAs, which were reviewed."
+	quote, ok := recoverPassageQuote(passage, "The evidence generated in this SR is based on 6 MAs")
+	if !ok || quote != "evidence generated in this SR is based on 6 MAs" {
+		t.Fatalf("recovered quote=%q ok=%v", quote, ok)
+	}
+	if quote, ok := recoverPassageQuote(passage, "The evidence generated in this SR proves clinical effectiveness for every disease"); ok {
+		t.Fatalf("accepted unrelated tail: %q", quote)
+	}
+}
+
+func TestEvidenceFirstDraftUsesValidSupportWhenAnotherHasOCRErrors(t *testing.T) {
+	hits := []hit{
+		{ID: uuid.New(), Text: "Unrelated bibliographic note."},
+		{ID: uuid.New(), Text: "吀؀e evidence generated in this SR is based on 6 MAs."},
+	}
+	chat := func(context.Context, string, string) (string, error) {
+		return `{"claims":[{"text":"The review considered six meta-analyses.","supports":[{"id":"E1","quote":"This quote does not appear in the passage"},{"id":"E2","quote":"The evidence generated in this SR is based on 6 MAs"}]}]}`, nil
+	}
+	answer, labels, omitted, err := buildEvidenceFirstDraft(context.Background(), "How many meta-analyses?", "quick", "", hits, chat)
+	if err != nil || omitted != 0 || answer != "The review considered six meta-analyses [E2]." || len(labels) != 1 || labels[0] != "E2" {
+		t.Fatalf("answer=%q labels=%v omitted=%d err=%v", answer, labels, omitted, err)
+	}
+}

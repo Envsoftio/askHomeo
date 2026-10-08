@@ -13,6 +13,16 @@ services:
       test: ["CMD-SHELL", "pg_isready -U homeopath"]
       interval: 3s
       retries: 20
+  adminer:
+    image: adminer:4
+    profiles: ["dev"]
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    ports:
+      - "127.0.0.1:8089:8080"
+    depends_on:
+      db:
+        condition: service_healthy
   api:
     build:
       context: .
@@ -26,12 +36,24 @@ services:
       AUTH_PRINCIPALS_JSON: ${AUTH_PRINCIPALS_JSON:-}
       AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_INPUT_STYLE: ${EMBEDDING_INPUT_STYLE:-}
+      CHAT_PROVIDER: ${CHAT_PROVIDER:-}
+      CHAT_BASE_URL: ${CHAT_BASE_URL:-}
+      CHAT_API_KEY: ${CHAT_API_KEY:-}
+      CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-}
+      CHAT_REASONING_EFFORT: ${CHAT_REASONING_EFFORT:-}
+      MODEL_REQUEST_TIMEOUT_SECONDS: ${MODEL_REQUEST_TIMEOUT_SECONDS:-}
+      CHAT_PROMPT_SUFFIX: ${CHAT_PROMPT_SUFFIX:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
       EMBEDDING_REVISION: ${EMBEDDING_REVISION:-nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_K_M.gguf}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
-      CHAT_REVISION: ${CHAT_REVISION:-qwen3-14b-local}
+      CHAT_REVISION: ${CHAT_REVISION:-}
     volumes:
       - ./data/starter-corpus:/app/data/starter-corpus:ro
       - ./data/runtime/assets:/app/data/runtime/assets
@@ -48,12 +70,24 @@ services:
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
       AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_INPUT_STYLE: ${EMBEDDING_INPUT_STYLE:-}
+      CHAT_PROVIDER: ${CHAT_PROVIDER:-}
+      CHAT_BASE_URL: ${CHAT_BASE_URL:-}
+      CHAT_API_KEY: ${CHAT_API_KEY:-}
+      CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-}
+      CHAT_REASONING_EFFORT: ${CHAT_REASONING_EFFORT:-}
+      MODEL_REQUEST_TIMEOUT_SECONDS: ${MODEL_REQUEST_TIMEOUT_SECONDS:-}
+      CHAT_PROMPT_SUFFIX: ${CHAT_PROMPT_SUFFIX:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-nomic-embed-text-v1.5}
       EMBEDDING_REVISION: ${EMBEDDING_REVISION:-nomic-ai/nomic-embed-text-v1.5-GGUF/nomic-embed-text-v1.5.Q4_K_M.gguf}
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
-      CHAT_REVISION: ${CHAT_REVISION:-qwen3-14b-local}
+      CHAT_REVISION: ${CHAT_REVISION:-}
     volumes:
       - ./data/starter-corpus:/app/data/starter-corpus:ro
       - ./data/runtime/assets:/app/data/runtime/assets

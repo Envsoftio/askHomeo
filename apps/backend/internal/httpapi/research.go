@@ -36,8 +36,8 @@ var questionTermPattern = regexp.MustCompile(`[\p{L}\p{N}]{3,}`)
 var quoteWordPattern = regexp.MustCompile(`[\p{L}\p{N}]+`)
 var splitOCRWordPattern = regexp.MustCompile(`-\s*\n\s*`)
 
-const answerPromptRevision = "historical-evidence-first-v1"
-const claimPromptRevision = "quote-relevance-v2"
+const answerPromptRevision = "historical-evidence-first-v2"
+const claimPromptRevision = "quote-relevance-v5-heading-quote"
 
 func validResearchQuestion(q string) bool {
 	return len(q) <= 1000 && questionTermPattern.MatchString(q)
@@ -55,7 +55,8 @@ func (a *API) indexStatus(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "source not found")
 		return
 	}
-	write(w, 200, map[string]any{"status": status, "model": model, "model_revision": revision, "dimensions": dimensions, "candidate_run_id": candidateID, "active_run_id": activeID, "completed": done, "total": total, "error": problem, "can_retry": status == "failed"})
+	matchesConfig := a.Model != nil && model == a.Model.Config.EmbeddingModel && revision == a.Model.Config.EmbeddingRevision && dimensions == a.Model.Config.Dimensions
+	write(w, 200, map[string]any{"status": status, "model": model, "model_revision": revision, "dimensions": dimensions, "matches_config": matchesConfig, "candidate_run_id": candidateID, "active_run_id": activeID, "completed": done, "total": total, "error": problem, "can_retry": status == "failed"})
 }
 func (a *API) reindex(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, r) {
@@ -124,12 +125,6 @@ func (a *API) reindex(w http.ResponseWriter, r *http.Request) {
 	_, err = tx.Exec(r.Context(), `INSERT INTO embedding_jobs(job_id,index_run_id) VALUES($1,$2) ON CONFLICT(job_id) DO UPDATE SET index_run_id=EXCLUDED.index_run_id`, jobID, runID)
 	if err != nil {
 		fail(w, 500, "Could not queue preparation.")
-		return
-	}
-	var eligible int
-	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN sources s ON s.id=ai.source_id WHERE ir.id=$1 AND ir.status='ready' AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL`, runID).Scan(&eligible)
-	if err != nil || eligible == 0 {
-		fail(w, 409, "The source became unavailable while checking the answer.")
 		return
 	}
 	if err = tx.Commit(r.Context()); err != nil {
@@ -287,8 +282,9 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		selected = append(selected, id)
 	}
 	var runID, configID uuid.UUID
-	var modelID string
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) ORDER BY s.created_at LIMIT 1`, selected).Scan(&runID, &configID, &modelID)
+	var modelID, modelRevision string
+	var modelDimensions int
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id,ec.model_revision,ec.dimensions FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) ORDER BY s.created_at LIMIT 1`, selected).Scan(&runID, &configID, &modelID, &modelRevision, &modelDimensions)
 	if err != nil {
 		if len(selected) > 0 {
 			fail(w, 409, "One or more selected sources are not ready. Refresh the source list and choose again.")
@@ -317,8 +313,8 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		fail(w, 503, "Models are not configured.")
 		return
 	}
-	if modelID != a.Model.Config.EmbeddingModel {
-		fail(w, 503, "The active index uses a different embedding model.")
+	if modelID != a.Model.Config.EmbeddingModel || modelRevision != a.Model.Config.EmbeddingRevision || modelDimensions != a.Model.Config.Dimensions {
+		fail(w, 409, "The active index uses a different embedding configuration. Reindex the source before asking questions with this embedding model.")
 		return
 	}
 	models, err := a.Model.Models(r.Context())
@@ -472,9 +468,13 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	checkCtx := context.WithValue(r.Context(), claimCollectorKey{}, &claimChecks)
 	a.setAnswerJobStage(r.Context(), "Checking claims against source quotes")
 	verificationStarted := time.Now()
-	checkedAnswer, checkedCitations, rejectedClaims, initialChecks, err := verifyClaimSentencesDetailed(checkCtx, q, draft.Answer, evidence, a.Model.Chat)
+	checkedAnswer, checkedCitations, rejectedClaims, initialChecks, err := verifyClaimSentencesBatched(checkCtx, q, draft.Answer, evidence, a.Model.Chat)
 	verificationDuration := time.Since(verificationStarted)
-	a.logAnswerStageFromContext(r.Context(), "claim_verification", map[string]any{"checked_claim_count": len(initialChecks), "rejected_claim_count": rejectedClaims, "prompt_revision": claimPromptRevision, "error": err != nil}, &verificationDuration)
+	verificationLog := map[string]any{"checked_claim_count": len(initialChecks), "rejected_claim_count": rejectedClaims, "prompt_revision": claimPromptRevision, "error": err != nil}
+	if err != nil {
+		verificationLog["error_message"] = err.Error()
+	}
+	a.logAnswerStageFromContext(r.Context(), "claim_verification", verificationLog, &verificationDuration)
 	claimChecks = append(claimChecks, initialChecks...)
 	if err != nil {
 		fail(w, 503, "Support check failed: "+err.Error())
@@ -484,7 +484,11 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	draft.Answer, draft.Citations = checkedAnswer, checkedCitations
 	used, valid = validateDraft(draft.Answer, draft.Citations, evidence)
 	if !valid {
-		a.insufficientWithFilters(w, r.Context(), q, runID, mode, "I could not verify the draft claims against the source pages. Check the considered passages or try a different question about these sources.", evidence, selected, searches...)
+		reason := "I could not verify the draft claims against the source pages. Check the claim checks and considered passages or try a different question about these sources."
+		if len(selected) == 0 && strings.Contains(strings.ToLower(q), "selected study") {
+			reason = "I could not verify an answer about a single study while searching all sources. Choose one prepared paper, then ask about its design and results. Check the claim checks and considered passages below."
+		}
+		a.insufficientWithChecks(w, r.Context(), q, runID, mode, reason, evidence, selected, claimChecks, searches...)
 		return
 	}
 	if err = a.verifyEvidence(r.Context(), used); err != nil {
@@ -699,13 +703,21 @@ func verifyClaimSentencesDetailed(ctx context.Context, question, answer string, 
 		for _, quote := range anchors.Quotes {
 			label := strings.TrimSuffix(strings.TrimPrefix(quote.ID, "["), "]")
 			h, ok := cited[label]
-			if !ok || seenQuotes[label] || !exactPassageQuote(h.Text, quote.Text) {
+			if !ok || seenQuotes[label] {
 				continue
 			}
-			start, end, found := locatePassageQuote(h.Text, quote.Text)
+			if ambiguousOpeningComparison(h.Text) {
+				continue
+			}
+			exactQuote, ok := recoverPassageQuote(h.Text, quote.Text)
+			if !ok {
+				continue
+			}
+			start, end, found := locatePassageQuote(h.Text, exactQuote)
 			if !found {
 				continue
 			}
+			start = extendQuoteToSubjectHeading(h.Text, sentence, start)
 			seenQuotes[label] = true
 			excerpt := string([]rune(h.Text)[start:end])
 			checkRecord.Supports = append(checkRecord.Supports, claimSupport{ChunkID: h.ID, Label: label, Start: start, End: end, Text: excerpt})
@@ -751,6 +763,217 @@ func verifyClaimSentencesDetailed(ctx context.Context, question, answer string, 
 		}
 	}
 	return strings.Join(kept, " "), declared, rejected, checks, nil
+}
+
+// Check every drafted sentence in two provider calls, while validating each
+// returned quotation against the stored passage before asking for a verdict.
+func verifyClaimSentencesBatched(ctx context.Context, question, answer string, hits []hit, chat func(context.Context, string, string) (string, error)) (string, []string, int, []claimCheck, error) {
+	type passageInput struct {
+		ID      string `json:"id"`
+		Text    string `json:"text"`
+		Context string `json:"context,omitempty"`
+	}
+	type quoteInput struct {
+		Claim    int            `json:"claim"`
+		Text     string         `json:"text"`
+		Passages []passageInput `json:"passages"`
+	}
+	type verdictInput struct {
+		Claim  int            `json:"claim"`
+		Text   string         `json:"text"`
+		Quotes []passageInput `json:"quotes"`
+	}
+	sentences := splitAnswerSentences(answer)
+	checks := make([]claimCheck, len(sentences))
+	requests := make([]quoteInput, 0, len(sentences))
+	citedByClaim := make(map[int]map[string]hit)
+	rejected := 0
+	for i, sentence := range sentences {
+		sentence = strings.TrimSpace(sentence)
+		checks[i] = claimCheck{Text: sentence, Decision: "missing_excerpt"}
+		if sentence == "" {
+			continue
+		}
+		cited := map[string]hit{}
+		passages := []passageInput{}
+		for _, match := range citePattern.FindAllStringSubmatch(sentence, -1) {
+			for index, h := range hits {
+				label := fmt.Sprintf("E%d", index+1)
+				_, exists := cited[label]
+				if label == "E"+match[1] && !exists {
+					cited[label] = h
+					passages = append(passages, passageInput{ID: label, Text: h.Text})
+				}
+			}
+		}
+		if len(passages) == 0 {
+			rejected++
+			continue
+		}
+		citedByClaim[i+1] = cited
+		requests = append(requests, quoteInput{Claim: i + 1, Text: sentence, Passages: passages})
+	}
+	if len(requests) == 0 {
+		return "", nil, rejected, checks, nil
+	}
+	requestJSON, _ := json.Marshal(requests)
+	raw, err := chat(ctx, "For each numbered claim, copy one short exact quotation from every cited passage that supports the complete claim and directly answers the question. Return an empty quotes array when support is missing. Do not paraphrase. Return only JSON {\"checks\":[{\"claim\":1,\"quotes\":[{\"id\":\"E1\",\"text\":\"exact words\"}]}]} with one check per claim.", "Question: "+question+"\nClaims and cited passages: "+string(requestJSON))
+	if err != nil {
+		return "", nil, 0, nil, err
+	}
+	var quoteResponse struct {
+		Checks []struct {
+			Claim  int `json:"claim"`
+			Quotes []struct {
+				ID   string `json:"id"`
+				Text string `json:"text"`
+			} `json:"quotes"`
+		} `json:"checks"`
+	}
+	if json.NewDecoder(strings.NewReader(strings.TrimSpace(raw))).Decode(&quoteResponse) != nil || quoteResponse.Checks == nil {
+		return "", nil, 0, nil, errors.New("answer model returned invalid grouped quotation checks")
+	}
+	quotesByClaim := map[int]map[string]string{}
+	for _, item := range quoteResponse.Checks {
+		if quotesByClaim[item.Claim] != nil {
+			continue
+		}
+		quotesByClaim[item.Claim] = map[string]string{}
+		for _, quote := range item.Quotes {
+			label := strings.TrimSuffix(strings.TrimPrefix(quote.ID, "["), "]")
+			quotesByClaim[item.Claim][label] = quote.Text
+		}
+	}
+	verdictRequests := []verdictInput{}
+	for _, request := range requests {
+		cited := citedByClaim[request.Claim]
+		quotes := []passageInput{}
+		for _, passage := range request.Passages {
+			h := cited[passage.ID]
+			if ambiguousOpeningComparison(h.Text) {
+				break
+			}
+			quote, ok := quotesByClaim[request.Claim][passage.ID]
+			if !ok {
+				break
+			}
+			exact, ok := recoverPassageQuote(h.Text, quote)
+			if !ok {
+				break
+			}
+			start, end, ok := locatePassageQuote(h.Text, exact)
+			if !ok {
+				break
+			}
+			start = extendQuoteToSubjectHeading(h.Text, request.Text, start)
+			excerpt := string([]rune(h.Text)[start:end])
+			checks[request.Claim-1].Supports = append(checks[request.Claim-1].Supports, claimSupport{ChunkID: h.ID, Label: passage.ID, Start: start, End: end, Text: excerpt})
+			context := []rune(strings.TrimSpace(h.Text))
+			if len(context) > 120 {
+				context = context[:120]
+			}
+			quotes = append(quotes, passageInput{ID: passage.ID, Text: excerpt, Context: string(context)})
+		}
+		if len(quotes) != len(request.Passages) {
+			rejected++
+			continue
+		}
+		verdictRequests = append(verdictRequests, verdictInput{Claim: request.Claim, Text: request.Text, Quotes: quotes})
+	}
+	if len(verdictRequests) == 0 {
+		return "", nil, rejected, checks, nil
+	}
+	verdictJSON, _ := json.Marshal(verdictRequests)
+	raw, err = chat(ctx, "Judge each numbered claim against only its exact source quotations. The short context may identify the source section or subject, but factual details must come from the exact quote. Every factual part must be supported and the claim must directly answer the question. Check negation, comparison direction, and named entities. Return only JSON {\"checks\":[{\"claim\":1,\"supported\":true,\"relevant\":true}]} with one verdict per claim.", "Question: "+question+"\nClaims and exact quotations: "+string(verdictJSON))
+	if err != nil {
+		return "", nil, 0, nil, err
+	}
+	var verdictResponse struct {
+		Checks []struct {
+			Claim     int   `json:"claim"`
+			Supported *bool `json:"supported"`
+			Relevant  *bool `json:"relevant"`
+		} `json:"checks"`
+	}
+	if json.NewDecoder(strings.NewReader(strings.TrimSpace(raw))).Decode(&verdictResponse) != nil || verdictResponse.Checks == nil {
+		return "", nil, 0, nil, errors.New("answer model returned invalid grouped support verdicts")
+	}
+	verdicts := map[int]struct{ supported, relevant bool }{}
+	for _, item := range verdictResponse.Checks {
+		if item.Supported != nil && item.Relevant != nil {
+			verdicts[item.Claim] = struct{ supported, relevant bool }{*item.Supported, *item.Relevant}
+		}
+	}
+	kept := []string{}
+	labels := map[string]bool{}
+	for _, request := range verdictRequests {
+		verdict := verdicts[request.Claim]
+		if !verdict.supported || !verdict.relevant {
+			rejected++
+			checks[request.Claim-1].Decision = "unsupported"
+			if !verdict.relevant {
+				checks[request.Claim-1].Decision = "irrelevant"
+			}
+			continue
+		}
+		checks[request.Claim-1].Decision = "supported"
+		kept = append(kept, request.Text)
+		for _, passage := range request.Quotes {
+			labels[passage.ID] = true
+		}
+	}
+	declared := []string{}
+	for i := range hits {
+		label := fmt.Sprintf("E%d", i+1)
+		if labels[label] {
+			declared = append(declared, label)
+		}
+	}
+	return strings.Join(kept, " "), declared, rejected, checks, nil
+}
+
+// A passage that begins with a comparison has lost the preceding subject at
+// the chunk boundary. Its listed remedies must not become the claim's subject.
+func ambiguousOpeningComparison(passage string) bool {
+	words := strings.Fields(strings.ToLower(passage))
+	if len(words) == 0 {
+		return false
+	}
+	return words[0] == "like" || (len(words) > 1 && ((words[0] == "as" && words[1] == "with") || (words[0] == "similar" && words[1] == "to")))
+}
+
+// If a short quotation omits the nearby section heading naming its subject,
+// include the heading in the same contiguous source excerpt. This lets the
+// verifier resolve pronouns such as "the headache" without relying on an
+// uncited description of the passage.
+func extendQuoteToSubjectHeading(passage, claim string, start int) int {
+	runes := []rune(passage)
+	if start < 1 || start > len(runes) {
+		return start
+	}
+	prefix := string(runes[:start])
+	lineStart := 0
+	for _, line := range strings.Split(prefix, "\n") {
+		trimmed := strings.TrimSpace(line)
+		letters, uppercase := 0, 0
+		for _, ch := range trimmed {
+			if unicode.IsLetter(ch) {
+				letters++
+				if unicode.IsUpper(ch) {
+					uppercase++
+				}
+			}
+		}
+		if letters >= 5 && uppercase*5 >= letters*4 && start-lineStart <= 220 {
+			for _, word := range quoteWordPattern.FindAllString(strings.ToLower(trimmed), -1) {
+				if len([]rune(word)) >= 5 && strings.Contains(strings.ToLower(claim), word) {
+					return lineStart
+				}
+			}
+		}
+		lineStart += utf8.RuneCountInString(line) + 1
+	}
+	return start
 }
 
 // Character offsets use Unicode code points, matching chunk passage text.
@@ -809,6 +1032,47 @@ func exactPassageQuote(passage, quote string) bool {
 		return false
 	}
 	return strings.Contains(" "+strings.Join(normalize(passage), " ")+" ", " "+strings.Join(words, " ")+" ")
+}
+
+// OCR can corrupt a word inside an otherwise copied quotation. Keep only the
+// longest contiguous part that exists in the saved passage; the later claim
+// verdict still checks whether that narrower excerpt supports the claim.
+func recoverPassageQuote(passage, quote string) (string, bool) {
+	if exactPassageQuote(passage, quote) {
+		return quote, true
+	}
+	if utf8.RuneCountInString(quote) > 500 {
+		return "", false
+	}
+	quoteWords := quoteWordPattern.FindAllString(strings.ToLower(splitOCRWordPattern.ReplaceAllString(quote, "")), -1)
+	passageWords := quoteWordPattern.FindAllString(strings.ToLower(splitOCRWordPattern.ReplaceAllString(passage, "")), -1)
+	if len(quoteWords) < 4 {
+		return "", false
+	}
+	bestStart, bestLength := 0, 0
+	for i, word := range quoteWords {
+		for j, passageWord := range passageWords {
+			if word != passageWord {
+				continue
+			}
+			length := 0
+			for i+length < len(quoteWords) && j+length < len(passageWords) && quoteWords[i+length] == passageWords[j+length] {
+				length++
+			}
+			if length > bestLength {
+				bestStart, bestLength = i, length
+			}
+		}
+	}
+	if bestLength < 4 || bestLength*2 < len(quoteWords) {
+		return "", false
+	}
+	matched := strings.Join(quoteWords[bestStart:bestStart+bestLength], " ")
+	start, end, ok := locatePassageQuote(passage, matched)
+	if !ok {
+		return "", false
+	}
+	return string([]rune(passage)[start:end]), true
 }
 
 // Give a source omitted by the first draft a focused chance to contribute.
@@ -1406,6 +1670,9 @@ func (a *API) insufficient(w http.ResponseWriter, ctx context.Context, q string,
 	a.insufficientWithFilters(w, ctx, q, run, mode, reason, candidates, selectedSourcesFromContext(ctx), searches...)
 }
 func (a *API) insufficientWithFilters(w http.ResponseWriter, ctx context.Context, q string, run uuid.UUID, mode, reason string, candidates []hit, selected []uuid.UUID, searches ...searchTrace) {
+	a.insufficientWithChecks(w, ctx, q, run, mode, reason, candidates, selected, nil, searches...)
+}
+func (a *API) insufficientWithChecks(w http.ResponseWriter, ctx context.Context, q string, run uuid.UUID, mode, reason string, candidates []hit, selected []uuid.UUID, checks []claimCheck, searches ...searchTrace) {
 	id := uuid.New()
 	tx, err := a.Store.DB.Begin(ctx)
 	if err != nil {
@@ -1416,6 +1683,19 @@ func (a *API) insufficientWithFilters(w http.ResponseWriter, ctx context.Context
 	if _, err = tx.Exec(ctx, `INSERT INTO answers(id,question,status,answer_text,index_run_id,research_mode,answer_job_id,prompt_revision,owner_role,owner_principal_id) VALUES($1,$2,'insufficient_evidence',$3,$4,$5,$6,$7,$8,$9)`, id, q, reason, run, mode, jobIDFromContext(ctx), answerPromptRevision, answerOwner(ctx), requestPrincipal(ctx).ID); err != nil {
 		fail(w, 500, "Could not save research result.")
 		return
+	}
+	for i, check := range checks {
+		ordinal := i + 1
+		if _, err = tx.Exec(ctx, `INSERT INTO answer_claims(answer_id,ordinal,claim_text,decision,check_method,verification_prompt_revision,verification_model) VALUES($1,$2,$3,$4,'exact_quote_and_relevance',$5,$6)`, id, ordinal, check.Text, check.Decision, claimPromptRevision, a.Model.Config.AnswerModel); err != nil {
+			fail(w, 500, "Could not save claim checks.")
+			return
+		}
+		for _, support := range check.Supports {
+			if _, err = tx.Exec(ctx, `INSERT INTO answer_claim_support(answer_id,claim_ordinal,chunk_id,evidence_label,excerpt_start,excerpt_end,excerpt_text) VALUES($1,$2,$3,$4,$5,$6,$7)`, id, ordinal, support.ChunkID, support.Label, support.Start, support.End, support.Text); err != nil {
+				fail(w, 500, "Could not save supporting excerpts.")
+				return
+			}
+		}
 	}
 	for i, sourceID := range selected {
 		if _, err = tx.Exec(ctx, `INSERT INTO answer_source_filters(answer_id,source_id,ordinal) VALUES($1,$2,$3)`, id, sourceID, i+1); err != nil {
@@ -1490,6 +1770,18 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 		sql string
 		arg any
 	}{{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id AND ir.embedding_config_id=ce.embedding_config_id JOIN active_indexes ai ON ai.index_run_id=ir.id WHERE ce.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) ORDER BY ce.embedding <=> $2::vector LIMIT 40`, vector}, {`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id JOIN active_indexes ai ON ai.index_run_id=ir.id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex}}
+	if overviewQuestion(q) {
+		queries = append(queries, struct {
+			sql string
+			arg any
+		}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex})
+		if strings.Contains(strings.ToLower(q), "result") || strings.Contains(strings.ToLower(q), "finding") || strings.Contains(strings.ToLower(q), "conclusion") {
+			queries = append(queries, struct {
+				sql string
+				arg any
+			}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, "result | conclusion | effect | placebo"})
+		}
+	}
 	for _, query := range queries {
 		rows, err := a.Store.DB.Query(ctx, query.sql, config, query.arg, scope, selected)
 		if err != nil {
@@ -1516,6 +1808,15 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 	}
 	out := make([]hit, 0, len(all))
 	for _, h := range all {
+		// Overview questions need the paper's abstract and opening results.
+		// Otherwise long bibliographies and tables can outrank those pages.
+		if overviewQuestion(q) && researchPaperTitle(h.Title) && h.Scan <= 2 {
+			if h.Scan == 1 {
+				h.Score += 0.012
+			} else {
+				h.Score += 0.008
+			}
+		}
 		out = append(out, *h)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1537,6 +1838,16 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 		}
 	}
 	return chosenHits, nil
+}
+
+func overviewQuestion(q string) bool {
+	q = strings.ToLower(q)
+	return strings.Contains(q, "study") || strings.Contains(q, "review") || strings.Contains(q, "result") || strings.Contains(q, "finding") || strings.Contains(q, "conclusion") || strings.Contains(q, "included")
+}
+
+func researchPaperTitle(title string) bool {
+	title = strings.ToLower(title)
+	return strings.Contains(title, "review") || strings.Contains(title, "trial") || strings.Contains(title, "study") || strings.Contains(title, "meta-analysis") || strings.Contains(title, "meta-analyses")
 }
 
 func (a *API) verifyEvidence(ctx context.Context, hits []hit) error {

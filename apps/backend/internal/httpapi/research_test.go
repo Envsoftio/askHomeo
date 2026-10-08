@@ -21,6 +21,27 @@ func mockQuoteCheck(user string, hits []hit) string {
 	return string(result)
 }
 
+func TestGroupedClaimVerificationKeepsOnlyQuotedRelevantClaims(t *testing.T) {
+	hits := []hit{
+		{ID: uuid.New(), Text: "GELSEMIUM NITIDUM\nGelsemium headache is relieved by urine."},
+		{ID: uuid.New(), Text: "Like\nAconite, Gelsemium, and Silicea, the headache ends with urine."},
+	}
+	calls := 0
+	answer, labels, rejected, checks, err := verifyClaimSentencesBatched(context.Background(), "What does Nash say about headache relief?", "Nash says Gelsemium headache is relieved by urine [E1]. Gelsemium's headache ends with urine like Aconite and Silicea [E2].", hits, func(_ context.Context, _, user string) (string, error) {
+		calls++
+		if calls == 1 {
+			return `{"checks":[{"claim":1,"quotes":[{"id":"E1","text":"Gelsemium headache is relieved by urine"}]},{"claim":2,"quotes":[{"id":"E2","text":"Like Aconite, Gelsemium, and Silicea"}]}]}`, nil
+		}
+		if !strings.Contains(user, `"text":"GELSEMIUM NITIDUM`) {
+			t.Fatal("grouped verdict quotation omitted source heading")
+		}
+		return `{"checks":[{"claim":1,"supported":true,"relevant":true},{"claim":2,"supported":true,"relevant":true}]}`, nil
+	})
+	if err != nil || calls != 2 || rejected != 1 || len(labels) != 1 || labels[0] != "E1" || len(checks) != 2 || checks[0].Decision != "supported" || checks[1].Decision != "missing_excerpt" || len(checks[0].Supports) != 1 || !strings.HasPrefix(checks[0].Supports[0].Text, "GELSEMIUM NITIDUM") || !strings.Contains(answer, "Gelsemium") || strings.Contains(answer, "Silicea") {
+		t.Fatalf("answer=%q labels=%v rejected=%d checks=%v calls=%d err=%v", answer, labels, rejected, checks, calls, err)
+	}
+}
+
 func TestValidResearchQuestionNeedsSearchableTerm(t *testing.T) {
 	for _, q := range []string{"", "g", "GI", "???", "g!"} {
 		if validResearchQuestion(q) {
