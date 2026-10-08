@@ -14,10 +14,12 @@ mkdir -p /home/deploy/askhomeo
 cd /home/deploy/askhomeo
 cp .env.prod.example .env.prod
 chmod 600 .env.prod
-# Edit .env.prod with actual passwords, tokens, and the DeepInfra API key.
+# Edit .env.prod with actual passwords, tokens, and the selected AI provider settings.
 ```
 
 Use distinct random API and reviewer tokens of at least 24 characters. Use a URL-safe database password, for example one generated with `openssl rand -hex 32`. App credentials live only in `.env.prod` on the server; the workflow preserves this file and does not upload app credentials from GitHub. Changing `POSTGRES_PASSWORD` in the file does not update a password in an already initialized database: rotate the database role password as well.
+
+`AI_PROVIDER=deepinfra` requires `DEEPINFRA_API_KEY`. For a local model server, set `AI_PROVIDER=lmstudio` and `AI_BASE_URL=http://127.0.0.1:1234/v1`, and configure the embedding/chat models, revisions, and dimensions to match the models loaded on that server (see `.env.example`). All five model settings are required explicitly so local providers cannot silently inherit hosted model metadata. The DeepInfra key can be omitted for LM Studio. The production default remains DeepInfra if `AI_PROVIDER` is omitted. `REVIEWER_TOKEN` and `AUTH_PRINCIPALS_JSON` are optional; `API_TOKEN` remains required by the current backend even when named users are configured.
 
 Keep ports 5437, 8082, and 8088 free, or choose three distinct ports in `.env.prod`. These defaults differ from standard PostgreSQL's port so another host database can coexist. This configuration needs host ports above 1023 because it drops all capabilities and runs as non-root. Host networking shares the server's network namespace: omitting `ports` does not hide listeners. PostgreSQL binds to `127.0.0.1:5437`, and the API to `127.0.0.1:8082`; the worker has no listener. See Docker's [host networking and service settings](https://docs.docker.com/reference/compose-file/services/#network_mode).
 

@@ -55,6 +55,24 @@ func TestProviderConfiguration(t *testing.T) {
 	}
 }
 
+func TestLMStudioConfigurationWithoutDeepInfraKey(t *testing.T) {
+	t.Setenv("AI_PROVIDER", "lmstudio")
+	t.Setenv("AI_BASE_URL", "http://127.0.0.1:1234/v1")
+	t.Setenv("DEEPINFRA_API_KEY", "")
+	t.Setenv("EMBEDDING_MODEL", "text-embedding-nomic-embed-text-v1.5")
+	t.Setenv("EMBEDDING_REVISION", "local-nomic-revision")
+	t.Setenv("EMBEDDING_DIMENSIONS", "768")
+	t.Setenv("CHAT_MODEL", "qwen/qwen3-14b")
+	t.Setenv("CHAT_REVISION", "local-qwen-revision")
+	cfg, err := FromEnv()
+	if err != nil {
+		t.Fatalf("local provider must not require a DeepInfra key: %v", err)
+	}
+	if cfg.Provider != "lmstudio" || cfg.APIKey != "" || cfg.Dimensions != 768 {
+		t.Fatalf("unexpected local configuration: %+v", cfg)
+	}
+}
+
 func TestDeepInfraRequests(t *testing.T) {
 	c := New(Config{Provider: "deepinfra", BaseURL: "https://api.deepinfra.com/v1/openai", APIKey: "test-key", EmbeddingModel: "BAAI/bge-m3", Dimensions: 2, AnswerModel: "openai/gpt-oss-120b"})
 	calls := 0

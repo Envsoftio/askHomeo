@@ -27,13 +27,15 @@ x-backend: &backend
   environment: &backend-env
     DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}@127.0.0.1:${POSTGRES_PORT:-5437}/homeopath?sslmode=disable
     AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
-    AI_BASE_URL: ${AI_BASE_URL:-https://api.deepinfra.com/v1/openai}
-    DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?Set DEEPINFRA_API_KEY in .env.prod}
-    EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
-    EMBEDDING_REVISION: ${EMBEDDING_REVISION:-deepinfra-bge-m3-unpinned}
-    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-1024}
-    CHAT_MODEL: ${CHAT_MODEL:-openai/gpt-oss-120b}
-    CHAT_REVISION: ${CHAT_REVISION:-deepinfra-gpt-oss-120b-unpinned}
+    AI_BASE_URL: ${AI_BASE_URL:-http://127.0.0.1:1234/v1}
+    # Provider-specific requirements are validated by the backend.
+    DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}
+    # Explicit settings prevent LM Studio from inheriting hosted model metadata.
+    EMBEDDING_MODEL: ${EMBEDDING_MODEL:?Set EMBEDDING_MODEL for your AI_PROVIDER in .env.prod}
+    EMBEDDING_REVISION: ${EMBEDDING_REVISION:?Set EMBEDDING_REVISION for your AI_PROVIDER in .env.prod}
+    EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:?Set EMBEDDING_DIMENSIONS for your AI_PROVIDER in .env.prod}
+    CHAT_MODEL: ${CHAT_MODEL:?Set CHAT_MODEL for your AI_PROVIDER in .env.prod}
+    CHAT_REVISION: ${CHAT_REVISION:?Set CHAT_REVISION for your AI_PROVIDER in .env.prod}
 
 services:
   db:
