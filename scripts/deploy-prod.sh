@@ -6,7 +6,10 @@ if [[ ! -f .env.prod ]]; then
   echo 'Missing .env.prod: copy .env.prod.example and configure credentials on the server.' >&2
   exit 1
 fi
-chmod 600 .env.prod
+if [[ ! -r .env.prod ]]; then
+  echo 'Cannot read .env.prod: give the deployment user read access on the server.' >&2
+  exit 1
+fi
 mkdir -p data/starter-corpus
 
 compose=(docker compose -f docker-compose.prod.yml --env-file .env.prod)
