@@ -102,8 +102,8 @@ jobs:
           REMOTE
           phase='Code sync'
           echo 'Syncing application code...'
-          printf -v rsync_ssh '%q ' sshpass -e ssh "${ssh_options[@]}"
-          rsync -az --delete -e "$rsync_ssh" \
+          printf -v rsync_ssh '%q ' ssh "${ssh_options[@]}"
+          sshpass -e rsync -az --delete -e "$rsync_ssh" \
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude '.env*' \
