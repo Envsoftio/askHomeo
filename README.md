@@ -1,5 +1,7 @@
 # Local source research POC
 
+Product planning: [Product requirements and development direction](Homeopathy_AI_Product_Requirements_and_Roadmap.md) records the general-question and future case-analysis workflows, current POC boundaries, and guidance for task creation and architecture design. Use it alongside the [POC PRD](Homeopathy_AI_Source_Ingestion_POC_PRD.md) and [master handoff](Homeopathy_AI_Codex_Master_Handoff.md).
+
 ## Run
 
 1. Copy `.env.example` to `.env`, set a random `API_TOKEN` of at least 24 characters, and set `OPENROUTER_API_KEY`. Keep the file private.
