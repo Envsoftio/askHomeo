@@ -22,9 +22,15 @@ x-backend: &backend
   tmpfs:
     - /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777
   volumes:
-    - assets:/app/data/runtime/assets
+    # Legacy originals are mounted read-only for the one-time migration.
+    - assets:/app/data/runtime/assets:ro
     - ./data/starter-corpus:/app/data/starter-corpus:ro
   environment: &backend-env
+    PDF_STORAGE_PROVIDER: b2
+    B2_REGION: ${B2_REGION:?Set B2_REGION in .env.prod}
+    B2_BUCKET: ${B2_BUCKET:?Set B2_BUCKET in .env.prod}
+    B2_KEY_ID: ${B2_KEY_ID:?Set B2_KEY_ID in .env.prod}
+    B2_APPLICATION_KEY: ${B2_APPLICATION_KEY:?Set B2_APPLICATION_KEY in .env.prod}
     DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}@127.0.0.1:${POSTGRES_PORT:-5437}/homeopath?sslmode=disable
     AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
     AI_BASE_URL: ${AI_BASE_URL:-http://127.0.0.1:1234/v1}

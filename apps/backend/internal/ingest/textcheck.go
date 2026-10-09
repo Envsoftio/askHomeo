@@ -148,7 +148,11 @@ func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error
 	if err := w.Store.DB.QueryRow(ctx, `SELECT pdf_sha256 FROM sources WHERE id=$1 AND status='review'`, sourceID).Scan(&sha); err != nil {
 		return fmt.Errorf("find PDF for text check: %w", err)
 	}
-	pdf := w.Store.PDFPath(sha)
+	pdf, releasePDF, storageErr := w.Store.AcquirePDF(ctx, sha)
+	if storageErr != nil {
+		return storageErr
+	}
+	defer releasePDF()
 	rows, err := w.Store.DB.Query(ctx, `SELECT id,pdf_page_index,text_raw FROM pages WHERE source_id=$1 AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NULL ORDER BY scan_page_index`, sourceID)
 	if err != nil {
 		return fmt.Errorf("list text pages: %w", err)

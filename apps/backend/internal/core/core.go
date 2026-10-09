@@ -22,8 +22,9 @@ import (
 )
 
 type Store struct {
-	DB   *pgxpool.Pool
-	Root string
+	DB         *pgxpool.Pool
+	Root       string
+	PDFObjects PDFObjects
 }
 
 func (s *Store) PDFPath(sha string) string {
@@ -173,49 +174,20 @@ func (s *Store) ImportStarter(ctx context.Context, sourceKey string) (uuid.UUID,
 		return uuid.Nil, fmt.Errorf("open %s PDF: %w", sourceKey, err)
 	}
 	defer f.Close()
-	storedDir := filepath.Join(s.Root, "data/runtime/assets")
-	if err = os.MkdirAll(storedDir, 0700); err != nil {
-		return uuid.Nil, fmt.Errorf("create asset directory: %w", err)
+	if err = verifyPDFFile(path, asset.SHA256); err != nil {
+		return uuid.Nil, err
 	}
-	tmp, err := os.CreateTemp(storedDir, "incoming-*.pdf")
+	info, err := f.Stat()
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("stage PDF: %w", err)
+		return uuid.Nil, err
 	}
-	defer os.Remove(tmp.Name())
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(h, tmp), f)
+	n := info.Size()
+	if n != asset.Bytes {
+		return uuid.Nil, errors.New("PDF size differs from manifest")
+	}
+	storedPath, err := s.StorePDF(ctx, path, asset.SHA256)
 	if err != nil {
-		tmp.Close()
-		return uuid.Nil, fmt.Errorf("copy and hash %s PDF: %w", sourceKey, err)
-	}
-	if n != asset.Bytes || hex.EncodeToString(h.Sum(nil)) != asset.SHA256 {
-		tmp.Close()
-		return uuid.Nil, fmt.Errorf("%s PDF size/checksum differs from manifest", sourceKey)
-	}
-	if err = tmp.Sync(); err != nil {
-		tmp.Close()
-		return uuid.Nil, fmt.Errorf("sync staged PDF: %w", err)
-	}
-	if err = tmp.Chmod(0400); err != nil {
-		tmp.Close()
-		return uuid.Nil, fmt.Errorf("protect staged PDF: %w", err)
-	}
-	if err = tmp.Close(); err != nil {
-		return uuid.Nil, fmt.Errorf("close staged PDF: %w", err)
-	}
-	storedPath := filepath.Join(storedDir, asset.SHA256+".pdf")
-	if err = os.Link(tmp.Name(), storedPath); err != nil && !os.IsExist(err) {
-		return uuid.Nil, fmt.Errorf("store PDF: %w", err)
-	}
-	stored, err := os.Open(storedPath)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("open stored PDF: %w", err)
-	}
-	check := sha256.New()
-	storedBytes, copyErr := io.Copy(check, stored)
-	closeErr := stored.Close()
-	if copyErr != nil || closeErr != nil || storedBytes != asset.Bytes || hex.EncodeToString(check.Sum(nil)) != asset.SHA256 {
-		return uuid.Nil, errors.New("stored PDF failed integrity check")
+		return uuid.Nil, err
 	}
 	id := uuid.New()
 	job := uuid.New()
@@ -225,7 +197,7 @@ func (s *Store) ImportStarter(ctx context.Context, sourceKey string) (uuid.UUID,
 	}
 	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `INSERT INTO sources(id,source_key,title,author,publication_year,source_url,pdf_path,pdf_sha256,pdf_bytes,page_count,status)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued') ON CONFLICT(source_key) DO UPDATE SET pdf_path=EXCLUDED.pdf_path WHERE sources.pdf_sha256=EXCLUDED.pdf_sha256 RETURNING id`, id, seed.SourceKey, seed.CanonicalTitle, seed.Author, seed.PublicationYear, seed.SourceURL, storedPath, asset.SHA256, n, seed.PDFPageCount).Scan(&id)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued') ON CONFLICT(source_key) DO UPDATE SET source_key=EXCLUDED.source_key WHERE sources.pdf_sha256=EXCLUDED.pdf_sha256 RETURNING id`, id, seed.SourceKey, seed.CanonicalTitle, seed.Author, seed.PublicationYear, seed.SourceURL, storedPath, asset.SHA256, n, seed.PDFPageCount).Scan(&id)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("save source: %w", err)
 	}
@@ -261,11 +233,7 @@ func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title,
 			return uuid.Nil, errors.New("source URL must be an HTTP or HTTPS address")
 		}
 	}
-	dir := filepath.Join(s.Root, "data/runtime/assets")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return uuid.Nil, err
-	}
-	tmp, err := os.CreateTemp(dir, "upload-*.pdf")
+	tmp, err := os.CreateTemp("", "upload-*.pdf")
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -343,8 +311,8 @@ func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title,
 		sourceURL = strings.TrimSpace(pdfOriginURL)
 	}
 	sha := hex.EncodeToString(h.Sum(nil))
-	stored := filepath.Join(dir, sha+".pdf")
-	if err = os.Link(tmp.Name(), stored); err != nil && !os.IsExist(err) {
+	stored, err := s.StorePDF(ctx, tmp.Name(), sha)
+	if err != nil {
 		return uuid.Nil, err
 	}
 	id := uuid.New()

@@ -29,7 +29,7 @@ The first Quick attempt failed because the model's grouped quotation check did n
 - Chat: 11 calls, 9,690 prompt tokens, 1,427 completion tokens, US$0.008318125 provider-reported estimated cost. This includes the failed Quick attempt and retry.
 - Embeddings: 12 calls, 8,354 input tokens. DeepInfra did not return an estimated cost for these calls, so storage and reports correctly show unknown cost. The token volume is small, but the report does not claim a billed total.
 - The model-call table and admin answer report retain per-attempt outcome, model, tokens, duration, request ID when returned, and cost origin. No keys, prompts, or response bodies are stored there.
-- The full 1,136-page PDF, staging deployment, rights for wider use, and the 30-case evaluation remain unverified. Some accepted excerpt pages retain OCR errors; this smoke test does not establish clinical reliability.
+- The full 1,136-page PDF, staging deployment, rights for wider use, and the reviewed evaluation remain unverified. Some accepted excerpt pages retain OCR errors; this smoke test does not establish clinical reliability.
 - The US$0.50 ceiling was monitored between test steps; the application does not yet enforce a hard per-job dollar limit. Output tokens, request timeouts and retry counts bound individual operations.
 
 ## Staging acceptance still required

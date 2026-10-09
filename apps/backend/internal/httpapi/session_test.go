@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -38,16 +39,15 @@ func TestAdminPasswordSession(t *testing.T) {
 			if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Value == "test-password" || len(cookie.Value) < 32 {
 				t.Fatal("expected an opaque HttpOnly session cookie")
 			}
-			principal, ok := api.authenticate(cookie.Value)
-			if !ok || principal.ID != legacyAdminID {
-				t.Fatal("administrator identity must be preserved")
+			if _, ok := api.authenticate(cookie.Value); ok {
+				t.Fatal("browser cookie must not be a bearer token")
 			}
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
 			req.AddCookie(cookie)
 			w = httptest.NewRecorder()
 			h.ServeHTTP(w, req)
-			if w.Code != http.StatusOK || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].Value != cookie.Value {
-				t.Fatal("administrator session should survive and renew on subsequent requests")
+			if w.Code != http.StatusOK || len(w.Result().Cookies()) != 0 {
+				t.Fatal("administrator session should remain valid without extending its expiry")
 			}
 			req = httptest.NewRequest(http.MethodDelete, "/api/v1/session", nil)
 			req.AddCookie(cookie)
@@ -56,11 +56,15 @@ func TestAdminPasswordSession(t *testing.T) {
 			if w.Code != http.StatusOK || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge >= 0 {
 				t.Fatal("sign out must clear the administrator cookie")
 			}
+			req = httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+			req.AddCookie(cookie)
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatal("signed-out browser token must be revoked")
+			}
 			if err := api.ConfigureAdminLogin("admin@example.com", "new-password"); err != nil {
 				t.Fatal(err)
-			}
-			if _, ok := api.authenticate(cookie.Value); ok {
-				t.Fatal("old administrator session should expire after reconfiguration")
 			}
 		})
 	}
@@ -125,7 +129,7 @@ func TestBrowserSessionUsesNamedPrincipal(t *testing.T) {
 		t.Fatalf("login status=%d body=%s", w.Code, w.Body.String())
 	}
 	cookies := w.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != testingSessionMaxAge {
+	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode || cookies[0].MaxAge != browserSessionMaxAge || cookies[0].Value == principal.Token {
 		t.Fatalf("unexpected session cookie: %+v", cookies)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
@@ -135,8 +139,8 @@ func TestBrowserSessionUsesNamedPrincipal(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"reviewer"`) {
 		t.Fatalf("session status=%d body=%s", w.Code, w.Body.String())
 	}
-	if refreshed := w.Result().Cookies(); len(refreshed) != 1 || refreshed[0].MaxAge != testingSessionMaxAge {
-		t.Fatalf("session cookie was not renewed: %+v", refreshed)
+	if refreshed := w.Result().Cookies(); len(refreshed) != 0 {
+		t.Fatalf("session lifetime must not be extended by an ordinary request: %+v", refreshed)
 	}
 	logout := httptest.NewRequest(http.MethodDelete, "/api/v1/session", nil)
 	logout.AddCookie(cookies[0])
@@ -144,6 +148,13 @@ func TestBrowserSessionUsesNamedPrincipal(t *testing.T) {
 	h.ServeHTTP(w, logout)
 	if cleared := w.Result().Cookies(); w.Code != http.StatusOK || len(cleared) != 1 || cleared[0].MaxAge >= 0 {
 		t.Fatalf("session cookie was not cleared: status=%d cookies=%+v", w.Code, cleared)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(cookies[0])
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked reviewer session status=%d", w.Code)
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/session", nil))
@@ -169,5 +180,71 @@ func TestAdministratorSwitchRejectsReviewerToken(t *testing.T) {
 	h.ServeHTTP(w, correct)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"role":"admin"`) || len(w.Result().Cookies()) != 1 {
 		t.Fatalf("admin switch status=%d body=%s cookies=%v", w.Code, w.Body.String(), w.Result().Cookies())
+	}
+}
+
+func TestProductionBrowserSessionRequiresOriginAndSecureCookie(t *testing.T) {
+	api := &API{SecureCookies: true, PublicOrigin: "https://research.example.org"}
+	if err := api.ConfigureAdminLogin("admin@example.com", "test-password"); err != nil {
+		t.Fatal(err)
+	}
+	h := api.Handler()
+	login := func(origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"username":"admin@example.com","password":"test-password"}`))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	if w := login(""); w.Code != http.StatusForbidden {
+		t.Fatalf("missing origin status=%d", w.Code)
+	}
+	if w := login("https://other.example.org"); w.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin status=%d", w.Code)
+	}
+	w := login(api.PublicOrigin)
+	if w.Code != http.StatusOK || len(w.Result().Cookies()) != 1 || !w.Result().Cookies()[0].Secure {
+		t.Fatalf("same-origin login status=%d cookies=%v", w.Code, w.Result().Cookies())
+	}
+	cookie := w.Result().Cookies()[0]
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/session", nil)
+	req.AddCookie(cookie)
+	req.Header.Set("Origin", "https://other.example.org")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin logout status=%d", w.Code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("rejected logout must not revoke session: status=%d", w.Code)
+	}
+}
+
+func TestExpiredBrowserSessionIsRejected(t *testing.T) {
+	api := &API{ReviewerToken: "reviewer-local-demo-token-123456"}
+	h := api.Handler()
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"token":"reviewer-local-demo-token-123456"}`)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("login status=%d", w.Code)
+	}
+	cookie := w.Result().Cookies()[0]
+	api.browserSessions.Lock()
+	row := api.browserSessions.rows[hashBrowserToken(cookie.Value)]
+	row.expiresAt = time.Now().Add(-time.Second)
+	api.browserSessions.rows[hashBrowserToken(cookie.Value)] = row
+	api.browserSessions.Unlock()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.AddCookie(cookie)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expired session status=%d", w.Code)
 	}
 }

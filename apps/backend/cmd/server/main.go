@@ -7,8 +7,10 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,7 +22,7 @@ import (
 )
 
 func main() {
-	mode := flag.String("mode", "api", "api or worker")
+	mode := flag.String("mode", "api", "api, worker or migrate-pdfs")
 	flag.Parse()
 	root := os.Getenv("PROJECT_ROOT")
 	if root == "" {
@@ -37,11 +39,21 @@ func main() {
 		log.Fatal(err)
 	}
 	defer store.DB.Close()
+	if err = store.ConfigurePDFStorage(); err != nil {
+		log.Fatal(err)
+	}
 	migrateCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	err = store.Migrate(migrateCtx)
 	cancel()
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *mode == "migrate-pdfs" {
+		if err = store.MigratePDFs(ctx); err != nil {
+			log.Fatal(err)
+		}
+		log.Print("PDF migration completed; local originals retained")
+		return
 	}
 	cfg, err := localllm.FromEnv()
 	if err != nil {
@@ -93,6 +105,15 @@ func main() {
 		addr = ":8080"
 	}
 	api := &httpapi.API{Store: store, Token: token, ReviewerToken: os.Getenv("REVIEWER_TOKEN"), Model: model}
+	if os.Getenv("APP_ENV") == "production" {
+		origin := strings.TrimRight(os.Getenv("PUBLIC_ORIGIN"), "/")
+		parsed, parseErr := url.Parse(origin)
+		if parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			log.Fatal("PUBLIC_ORIGIN must be an HTTPS origin in production")
+		}
+		api.SecureCookies = true
+		api.PublicOrigin = origin
+	}
 	if raw := os.Getenv("AUTH_PRINCIPALS_JSON"); raw != "" {
 		if err = json.Unmarshal([]byte(raw), &api.Principals); err != nil {
 			log.Fatalf("AUTH_PRINCIPALS_JSON: %v", err)

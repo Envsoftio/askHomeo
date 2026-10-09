@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
-const testingSessionMaxAge = 400 * 24 * 60 * 60
+const browserSessionMaxAge = int(browserSessionLifetime / time.Second)
 
-func setSessionCookie(w http.ResponseWriter, token string) {
-	http.SetCookie(w, &http.Cookie{Name: "homeopath_session", Value: token, Path: "/api/", MaxAge: testingSessionMaxAge, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+func (a *API) setSessionCookie(w http.ResponseWriter, token string) {
+	http.SetCookie(w, &http.Cookie{Name: "homeopath_session", Value: token, Path: "/api/", MaxAge: browserSessionMaxAge, HttpOnly: true, Secure: a.SecureCookies, SameSite: http.SameSiteStrictMode})
 }
 
 func (a *API) openSession(w http.ResponseWriter, r *http.Request) {
@@ -48,14 +51,19 @@ func (a *API) openSession(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusForbidden, "This account grants "+principal.Role+" access. Sign in with the administrator username and password to switch to administrator.")
 		return
 	}
-	setSessionCookie(w, principal.Token)
+	token, err := a.createBrowserSession(r.Context(), principal.ID)
+	if err != nil {
+		fail(w, 503, "session store unavailable")
+		return
+	}
+	a.setSessionCookie(w, token)
 	w.Header().Set("Cache-Control", "no-store")
 	write(w, http.StatusOK, map[string]string{"name": principal.Name, "role": principal.Role})
 }
 
 func (a *API) currentSession(w http.ResponseWriter, r *http.Request) {
 	principal := requestPrincipal(r.Context())
-	if principal.Token == "" {
+	if principal.ID == uuid.Nil {
 		fail(w, http.StatusUnauthorized, "sign in required")
 		return
 	}
@@ -64,7 +72,13 @@ func (a *API) currentSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) closeSession(w http.ResponseWriter, r *http.Request) {
-	http.SetCookie(w, &http.Cookie{Name: "homeopath_session", Value: "", Path: "/api/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	if cookie, err := r.Cookie("homeopath_session"); err == nil {
+		if err := a.revokeBrowserSession(r.Context(), cookie.Value); err != nil {
+			fail(w, 503, "session store unavailable")
+			return
+		}
+	}
+	http.SetCookie(w, &http.Cookie{Name: "homeopath_session", Value: "", Path: "/api/", MaxAge: -1, HttpOnly: true, Secure: a.SecureCookies, SameSite: http.SameSiteStrictMode})
 	w.Header().Set("Cache-Control", "no-store")
 	write(w, http.StatusOK, map[string]bool{"signed_out": true})
 }

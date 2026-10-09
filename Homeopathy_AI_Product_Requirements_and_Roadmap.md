@@ -614,7 +614,7 @@ Do not silently fail over embeddings to another model. Any future chat fallback 
 
 Keep the modular Go backend, Vue 3/TypeScript frontend, PostgreSQL full-text search/pgvector, separate API/worker processes, and durable jobs. Extend through logical modules, schema migrations, and connector interfaces. Neither seven product modules nor international ambition by themselves require microservices, a graph database, a new vector database, or model fine-tuning.
 
-Current configuration and production examples provide a starting point, not deployment certification. The research launch workstream should cover HTTPS, production session behavior, server-managed credentials, database and original-asset backups with a tested restore, monitoring, rate/usage limits, and capacity/cost measurements. Current local filesystem assets can remain during an appropriate small deployment; move to object storage when deployment or durability requirements justify it, without assuming earlier MinIO/S3 proposals are already implemented.
+Current configuration and production examples provide a starting point, not deployment certification. The research launch workstream should cover HTTPS, production session behavior, server-managed credentials, database and original-asset backups with a tested restore, monitoring, rate/usage limits, and capacity/cost measurements. Original PDFs must use private Backblaze B2 object storage in production. Local files are temporary processing copies or retained migration originals; API and workers share the configured bucket without requiring a shared writable PDF volume.
 
 A broader service also needs account lifecycle, suitable roles, and access isolation for saved work. Distinguish existing token principals from full customer accounts, and reviewer answer isolation from organization/tenant isolation. The observed local session implementation should be reviewed for production cookie and lifecycle requirements rather than presented as production identity readiness.
 
@@ -778,7 +778,7 @@ From CORE-02 onward, keep implementation task specifications in separate files u
 
 Measure retrieval recall against reviewed passages, supported-claim precision, expected-point completeness, correct author/edition attribution, citation resolution, abstention on out-of-scope questions, performance/cost and operational recovery. Report each metric with its dataset, method, reviewed examples and limitations. Do not substitute candidate citation coverage for correctness.
 
-The inherited PRD calls for a scored held-out cross-source set, including at least ten comparison questions and five outside-corpus questions. Section 38 supersedes the earlier Nash/Farrington-specific corpus requirement: author/source comparisons must use the freshly selected corpus. Preserve the question-category coverage while growing toward the proposed 50-task product set. Documentation's draft 30-question evaluation and proposed future 50-task coverage are not completed benchmark results.
+The evaluation needs a scored held-out cross-source set with single-source, comparison, author/edition-constrained, and unsupported questions. Section 38 supersedes the earlier Nash/Farrington-specific corpus requirement: author/source comparisons must use the freshly selected corpus. Record the size and coverage of each versioned dataset; planned coverage is not a completed benchmark result.
 
 | Module | Representative failure cases to include |
 |---|---|
@@ -1741,7 +1741,7 @@ Open weights and hosted inference are separate choices: weights can be available
 | Metrics | Admin report derives candidate/citation/claim counts and timings from saved records. `citation_coverage` is cited chunks divided by selected candidates. | Rename/describe it as evidence usage; add real evaluation labels and stage-specific metrics. |
 | Retrieval history | Final evidence candidates/scores and search counts are saved; the whole pre-selection candidate pool is not persisted by the main answer path. | Save bounded per-stage candidate IDs/ranks and the evidence actually sent to generation so failures can be diagnosed. |
 | Model calls | Client returns answer text and discards provider usage; sends a generic `reasoning` object; no provider-enforced output schema is requested. | Add provider-aware parameters, response validation, observable model identity and usage/cost capture. |
-| Evaluation | Runner/scorer exist, but referenced `evaluation/` directory is absent. Existing release scripts expect exactly 30 cases. | Restore the reviewed baseline first; expand/version the runner and dataset together rather than assuming a 100-case file already works. |
+| Evaluation | The runner, scorer and dataset contract exist; no placeholder dataset is shipped. Source pins and human labels are still pending. | Build a reviewed, versioned baseline from permitted sources and report category coverage and sample size without a fixed case count. |
 
 Code references: [ingestion](apps/backend/internal/ingest/worker.go), [embedding eligibility](apps/backend/internal/ingest/embed.go), [retrieval and answers](apps/backend/internal/httpapi/research.go), [draft claims](apps/backend/internal/httpapi/evidence_claims.go), [section rendering](apps/backend/internal/httpapi/research_sections.go), [citation resolution](apps/backend/internal/httpapi/api.go), [specialized source answers](apps/backend/internal/httpapi/source_questions.go), [evaluation report](apps/backend/internal/httpapi/answer_evaluation.go), [provider client](apps/backend/internal/localllm/client.go), [evaluation runner](scripts/evaluate_poc.py), [release scorer](scripts/score_evaluation.py).
 
@@ -1823,7 +1823,7 @@ Changing the chat model alone does not require re-embedding. Changing embedding 
 
 Store unevaluated reference metrics as null/not evaluated. Keep human labels, model-estimated judgments and deterministic checks separate, with evaluator/model/prompt/dataset versions. User thumbs-up/down is useful feedback, not gold relevance. Do not compare the current specialized-path score of `1` with ordinary RRF scores as if they shared a confidence scale.
 
-Restore the existing 30-case evaluation contract, then grow to a versioned 50–100-question set spanning direct lookup, multiple authors/editions, study summaries, tables/numbers, OCR errors, conflicts, source restrictions, unsupported questions and document prompt injection. Keep a held-out subset unused for tuning. Gold evidence should retain source revision/page spans so that rechunking can be mapped or deliberately relabeled rather than creating misleading recall changes.
+Grow a versioned evaluation set spanning direct lookup, multiple authors/editions, study summaries, tables/numbers, OCR errors, conflicts, source restrictions, unsupported questions and document prompt injection. Keep a held-out subset unused for tuning. Gold evidence should retain source revision/page spans so that rechunking can be mapped or deliberately relabeled rather than creating misleading recall changes.
 
 First compare models on identical evidence to isolate generation/support quality; separately compare retrieval/chunking/reranking with a fixed generator. Use blinded human review of representative outputs; a second model can assist review but is not ground truth. Record the endpoint/quantization as part of the tested configuration.
 
@@ -1851,7 +1851,7 @@ The feature outcomes below remain relevant, but **section 36 supersedes their or
 | Priority | Feature outcome | Focused acceptance |
 |---|---|---|
 | 1 | Ask and inspect a GLM answer with correct provider parameters and usage | Selected hosted endpoint receives supported parameters; valid checked answer or clear failure; actual usage and unknown fields visible; embedding index unchanged. |
-| 2 | Establish a reviewed research baseline | Restore the 30-case assets/runner, label evidence and expected points, then version an expanded held-out set; publish actual failures and costs. |
+| 2 | Establish a reviewed research baseline | Label evidence and expected points for a versioned set with held-out cases; publish category counts, actual failures and costs. |
 | 3 | Read a passage with its heading and relevant surrounding context | Existing and expanded evidence retains original page/span mappings; old citations still resolve; OCR/source uncertainty remains visible. |
 | 4 | Retrieve stronger evidence for lookups and comparisons | Reranking before narrow selection; bounded candidate traces; improved held-out relevance/coverage without violating source scope. |
 | 5 | See complete, qualified research findings | Contextual claim support and requested-aspect coverage; missing/conflicting aspects shown; study numbers, qualifiers and author attribution survive. |
@@ -1911,7 +1911,7 @@ Decision date: 2026-10-09. The user wants system assistance to minimize manual e
 - The product owner and domain expert review flagged cases plus a representative sample of apparent passes, including each question type and both modes. Sampling passing results helps catch errors missed by automatic checks. Choose the sample size and escalation criteria with the first baseline; if recurring errors appear, widen review for the affected category.
 - Reduce repetitive work through grouped review, editable suggested labels and reuse of approved evidence/expected points for unchanged source revisions and questions. New answers still require their own support assessment; changed source text, evidence, model/prompt or pipeline configuration requires affected checks to run again and review scope to be reassessed.
 - **Clarification: users' answers do not require manual review before delivery.** Every answer passes automated evidence/citation checks and can then be delivered as supported, partial or insufficient evidence. Failed checks must not publish unchecked claims. Human review is for benchmark evaluation, flagged quality problems and sampled audits; it is not an approval step in the user's question-to-answer flow. Source review before publishing a document into the shared library is a separate ingestion workflow.
-- Preserve the inherited 30-case release contract while restoring the baseline: its scorer requires human decisions for displayed claims and expected points. Machine suggestions can speed review but cannot populate fields labelled human-reviewed without actual review. A smaller human-reviewed sample can support a clearly labelled sampled report; it cannot silently satisfy the existing full release gate. Any later change to that gate must be explicit and versioned.
+- Require a complete, versioned, human-reviewed dataset for release scoring. The scorer requires human decisions for displayed claims and expected points. Machine suggestions can speed review but cannot populate fields labelled human-reviewed without actual review. Report sample size and category coverage; passing a small set does not establish broad quality.
 - Report human-reviewed, machine-estimated and unevaluated results separately, including sample sizes and failures. Track review time and recurring correction types so automation can reduce measured manual effort. This clarification does not remove source rights/content/publication gates or authorize automatic rights approval.
 
 ### 37.2 User-selected Quick and Deep research
@@ -1982,7 +1982,7 @@ The first source workflow is **Import and validate the first staging source**, w
 
 Then expand to the representative mix in section 36.2 and **create a fresh evaluation baseline**. Prepare questions, suggested passages and expected answer points from those actual source revisions. Reuse/adapt the existing runner and scorer; old document titles, database IDs and reviewed labels must not be carried over as evidence for the new corpus. Restoring the old Nash/Farrington corpus or its question files is not a development prerequisite.
 
-Begin with a few assisted-review examples to establish the workflow, then complete the existing 30-case category contract: 10 single-source, 10 comparison/multi-passage, 5 author/edition-constrained and 5 unsupported questions. Version the new dataset, retain a held-out subset, and preserve the inherited quality thresholds and human-review requirements. A successful first-source check is progress toward the milestone, not full quality acceptance.
+Begin with a few assisted-review examples to establish the workflow, then grow a reviewed dataset covering single-source, comparison/multi-passage, author/edition-constrained and unsupported questions. Version the dataset, retain a held-out subset, report category counts and preserve the quality thresholds and human-review requirements. A successful first-source check is progress toward the milestone, not full quality acceptance.
 
 This clarification supersedes earlier instructions to restore a historical baseline or require Nash/Farrington comparisons. It changes the data starting point while retaining the existing application, research-core priority and evidence requirements. It does not authorize deleting any local data or establish that staging ingestion or evaluation has passed.
 
@@ -2009,7 +2009,7 @@ This clarification supersedes earlier instructions to restore a historical basel
 4. **Bound failures and spending.** Reconcile client retries with worker retries, timeouts and the agreed small staging experiment allowance. Invalid credentials/configuration must produce actionable errors without repeated paid work; transient failures must stay bounded. Confirm server-side secret handling and redact secrets from reports and logs.
 5. **Verify the first usable flow.** Run small embedding/chat connectivity checks, then prepare one permitted fresh PDF through existing review/publication gates and a compatible READY index. Exercise Quick and Deep with the same explicit source selection, inspect the original-page citation and reopen the saved answer. Record unrelated ingestion failures as visible follow-up work; unresolved failures prevent claiming this end-to-end acceptance passed.
 
-**Out of scope:** broad corpus import, reranker experiments, full 30-case evaluation, new account/email features, a new analytics dashboard, production cutover and staging-to-production data transfer. No old Nash/Farrington data is required.
+**Out of scope:** broad corpus import, reranker experiments, full reviewed evaluation, new account/email features, a new analytics dashboard, production cutover and staging-to-production data transfer. No old Nash/Farrington data is required.
 
 ### 39.3 Dependencies, data and affected layers
 
@@ -2034,7 +2034,7 @@ Attach the code changes, effective non-secret configuration, focused check resul
 
 Before deploying any schema change, back up the database and PDF assets together and describe migration compatibility. Retain the previous image and non-secret configuration for rollback, preserve prepared sources and citations, and keep any failed candidate index separate from the active compatible index. Reverting the chat provider alone must not delete or rebuild source data.
 
-**Next task:** [CORE-02 — Establish a fresh-source evaluation baseline](tasks/CORE-02.md). It starts with one complete permitted source and a few reviewed cases; the representative corpus and full 30-case release benchmark follow.
+**Current next implementation task:** [ING-01 — Safe public source fetching and document locations](tasks/ING-01.md), reflecting the later source-core priority in section 41. [PROD-01](tasks/PROD-01.md) is deferred after its initial session/readiness slice; CORE-02 remains a historical evaluation workstream.
 
 
 ## 40. HTML, TXT and XML source intake, including HTTP-only sources
@@ -2129,3 +2129,10 @@ Deliver a complete usable slice for each format, including UI, worker, review, i
 Minimum completion evidence: focused automated fixtures for format/transport/coverage boundaries, the frontend build, relevant backend checks, and concise end-to-end UI verification with one permitted HTML collection, one TXT document and one supported XML document. At least one acquisition must exercise HTTP-only delivery. Fixtures demonstrate mechanisms; record live source checks separately and do not claim live-site support from fixtures alone. Include discovered/selected/failed/excluded counts, extraction samples, source/revision identities and saved citation examples. Confirm that unselected or failed pages never appear as retrieved evidence and that collection-wide completeness questions acknowledge known omissions.
 
 No universal “all relevant data” guarantee: completion is measured against the selected work/scope and reviewed extraction contract. Missing pages, unsupported structures, uncertain grades and unverified rights must have visible outcomes rather than being silently discarded.
+
+## 41. Production delivery priority — 2026-10-09
+
+New tasks must deliver production application capabilities. Do not create standalone local validation, smoke-test or evaluation tasks. Include proportionate verification within implementation acceptance; existing research quality and rights gates still apply.
+
+- **Storage decision:** private Backblaze B2 is the durable PDF store, with checksum-addressed keys, authenticated reads, temporary processing files and a resumable migration preserving source/citation identity. Configuration and live cutover remain deployment work; code completion does not certify a live bucket.
+- **Current priority:** [ING-01 — Safe public source fetching and document locations](tasks/ING-01.md), followed by the complete HTML/TXT intake in ING-02. The user reports that deployment already works and has deferred PROD-01 backups/restore and operational alerts while core source functionality is built. [PROD-01](tasks/PROD-01.md) remains incomplete; its implemented session/readiness slice does not establish production operations acceptance.

@@ -56,7 +56,17 @@ func (a *API) indexStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	matchesConfig := a.Model != nil && model == a.Model.Config.EmbeddingModel && revision == a.Model.Config.EmbeddingRevision && dimensions == a.Model.Config.Dimensions
-	write(w, 200, map[string]any{"status": status, "model": model, "model_revision": revision, "dimensions": dimensions, "matches_config": matchesConfig, "candidate_run_id": candidateID, "active_run_id": activeID, "completed": done, "total": total, "error": problem, "can_retry": status == "failed"})
+	var activeStatus, activeModel, activeRevision, activeProcessingRevision string
+	var activeDimensions int
+	if activeID != "" {
+		err = a.Store.DB.QueryRow(r.Context(), `SELECT ir.status,ec.model_id,ec.model_revision,ec.dimensions,coalesce(p.processing_revision_id::text,'') FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN publications p ON p.id=ir.publication_id WHERE ai.source_id=$1`, id).Scan(&activeStatus, &activeModel, &activeRevision, &activeDimensions, &activeProcessingRevision)
+		if err != nil {
+			fail(w, 500, "could not read active index")
+			return
+		}
+	}
+	activeMatchesConfig := a.Model != nil && activeModel == a.Model.Config.EmbeddingModel && activeRevision == a.Model.Config.EmbeddingRevision && activeDimensions == a.Model.Config.Dimensions
+	write(w, 200, map[string]any{"status": status, "model": model, "model_revision": revision, "dimensions": dimensions, "matches_config": matchesConfig, "candidate_run_id": candidateID, "active_run_id": activeID, "active_status": activeStatus, "active_model": activeModel, "active_model_revision": activeRevision, "active_dimensions": activeDimensions, "active_processing_revision_id": activeProcessingRevision, "active_matches_config": activeMatchesConfig, "completed": done, "total": total, "error": problem, "can_retry": status == "failed"})
 }
 func (a *API) reindex(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, r) {

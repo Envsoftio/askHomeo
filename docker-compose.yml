@@ -28,6 +28,11 @@ services:
       context: .
       dockerfile: apps/backend/Dockerfile
     environment:
+      PDF_STORAGE_PROVIDER: ${PDF_STORAGE_PROVIDER:-b2}
+      B2_REGION: ${B2_REGION:-}
+      B2_BUCKET: ${B2_BUCKET:-}
+      B2_KEY_ID: ${B2_KEY_ID:-}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY:-}
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
@@ -71,6 +76,11 @@ services:
       dockerfile: apps/backend/Dockerfile
     command: ["/app/server", "-mode", "worker"]
     environment:
+      PDF_STORAGE_PROVIDER: ${PDF_STORAGE_PROVIDER:-b2}
+      B2_REGION: ${B2_REGION:-}
+      B2_BUCKET: ${B2_BUCKET:-}
+      B2_KEY_ID: ${B2_KEY_ID:-}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY:-}
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
       AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}

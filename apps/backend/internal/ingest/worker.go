@@ -276,7 +276,11 @@ func (w *Worker) processLocal(ctx context.Context, jobID, sourceID uuid.UUID) er
 	if err := w.Store.DB.QueryRow(ctx, `SELECT pdf_sha256,page_count-1 FROM sources WHERE id=$1`, sourceID).Scan(&sha, &count); err != nil {
 		return err
 	}
-	path := w.Store.PDFPath(sha)
+	path, releasePDF, storageErr := w.Store.AcquirePDF(ctx, sha)
+	if storageErr != nil {
+		return storageErr
+	}
+	defer releasePDF()
 	for i := 0; i < count; i++ {
 		var exists bool
 		if err := w.Store.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pages WHERE source_id=$1 AND pdf_page_index=$2)`, sourceID, i).Scan(&exists); err != nil {

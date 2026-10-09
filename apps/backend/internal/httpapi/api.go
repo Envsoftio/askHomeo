@@ -35,12 +35,16 @@ type API struct {
 	adminUsername     string
 	adminPassword     string
 	adminSessionToken string
+	SecureCookies     bool
+	PublicOrigin      string
+	browserSessions   browserSessionMemory
 }
 type roleKey struct{}
 
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
+	mux.HandleFunc("GET /api/v1/ready", a.ready)
 	mux.HandleFunc("POST /api/v1/session", a.openSession)
 	mux.HandleFunc("GET /api/v1/session", a.currentSession)
 	mux.HandleFunc("DELETE /api/v1/session", a.closeSession)
@@ -81,20 +85,28 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/citations/{id}", a.citation)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		principal, authenticated := a.authenticate(provided)
 		fromCookie := false
 		if provided == "" {
 			if cookie, err := r.Cookie("homeopath_session"); err == nil {
-				provided = cookie.Value
-				fromCookie = true
+				var lookupErr error
+				principal, authenticated, lookupErr = a.browserSessionPrincipal(r.Context(), cookie.Value)
+				fromCookie = authenticated
+				if lookupErr != nil {
+					fail(w, 503, "session store unavailable")
+					return
+				}
 			}
 		}
-		principal, authenticated := a.authenticate(provided)
-		if r.URL.Path != "/api/v1/health" && r.URL.Path != "/api/v1/session" && !authenticated {
+		if a.SecureCookies && (fromCookie || (r.URL.Path == "/api/v1/session" && r.Method == http.MethodPost)) && r.Method != http.MethodGet && r.Method != http.MethodHead {
+			if r.Header.Get("Origin") != a.PublicOrigin {
+				fail(w, 403, "request origin not allowed")
+				return
+			}
+		}
+		if r.URL.Path != "/api/v1/health" && r.URL.Path != "/api/v1/ready" && r.URL.Path != "/api/v1/session" && !authenticated {
 			fail(w, 401, "authentication required")
 			return
-		}
-		if authenticated && fromCookie && !(r.URL.Path == "/api/v1/session" && (r.Method == http.MethodPost || r.Method == http.MethodDelete)) {
-			setSessionCookie(w, principal.Token)
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 300*time.Second)
 		defer cancel()
@@ -102,6 +114,19 @@ func (a *API) Handler() http.Handler {
 		ctx = context.WithValue(ctx, principalKey{}, principal)
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+func (a *API) ready(w http.ResponseWriter, r *http.Request) {
+	if a.Store == nil || a.Store.DB == nil {
+		fail(w, 503, "database unavailable")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := a.Store.DB.Ping(ctx); err != nil {
+		fail(w, 503, "database unavailable")
+		return
+	}
+	write(w, 200, map[string]string{"status": "ready"})
 }
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -269,7 +294,13 @@ func (a *API) pageImage(w http.ResponseWriter, r *http.Request) {
 	defer os.RemoveAll(dir)
 	output := filepath.Join(dir, "page.png")
 	page := strconv.Itoa(index + 1)
-	cmd := exec.CommandContext(r.Context(), "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r110", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+output, "-f", a.Store.PDFPath(sha))
+	pdfPath, releasePDF, storageErr := a.Store.AcquirePDF(r.Context(), sha)
+	if storageErr != nil {
+		fail(w, 503, "PDF storage unavailable")
+		return
+	}
+	defer releasePDF()
+	cmd := exec.CommandContext(r.Context(), "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r110", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+output, "-f", pdfPath)
 	if _, err = cmd.CombinedOutput(); err != nil {
 		fail(w, 500, "preview unavailable")
 		return
@@ -425,7 +456,14 @@ func (a *API) pdf(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", "inline")
-	http.ServeFile(w, r, a.Store.PDFPath(sha))
+	pdfPath, releasePDF, storageErr := a.Store.AcquirePDF(r.Context(), sha)
+	if storageErr != nil {
+		fail(w, 503, "PDF storage unavailable")
+		return
+	}
+	defer releasePDF()
+	w.Header().Set("Cache-Control", "private, no-store")
+	http.ServeFile(w, r, pdfPath)
 }
 func (a *API) reviewPage(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)

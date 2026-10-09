@@ -13,5 +13,7 @@ apps/frontend/node_modules/
 apps/frontend/dist/
 apps/frontend/.env.local
 .DS_Store
+__pycache__/
+*.pyc
 .env.*
 !.env.prod.example
