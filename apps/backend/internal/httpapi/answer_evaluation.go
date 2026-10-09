@@ -176,5 +176,37 @@ func (a *API) answerEvaluation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Could not load technical log.")
 		return
 	}
-	write(w, 200, map[string]any{"job_id": id, "question": question, "question_raw": rawQuestion, "research_mode": mode, "job_status": jobStatus, "stage": stage, "attempts": attempts, "owner": owner, "selected_source_ids": selectedSources, "created_at": createdAt, "finished_at": finishedAt, "answer_id": answerID, "answer": answer, "answer_status": answerStatus, "answer_model": answerModel, "answer_revision": answerRevision, "prompt_revision": promptRevision, "embedding_model": embeddingModel, "embedding_revision": embeddingRevision, "metrics": metrics, "searches": searches, "candidates": candidates, "claims": claims, "logs": logs})
+	modelCalls := []map[string]any{}
+	callRows, err := a.Store.DB.Query(r.Context(), `SELECT kind,provider,requested_model,returned_model,provider_request_id,outcome,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens,estimated_cost_usd::float8,cost_origin,duration_ms,created_at FROM model_calls WHERE owner_kind='answer_job' AND owner_id=$1 ORDER BY id`, id)
+	if err != nil {
+		fail(w, 500, "Could not load model usage.")
+		return
+	}
+	var knownCost float64
+	unknownCostCalls := 0
+	for callRows.Next() {
+		var kind, provider, requested, returned, requestID, outcome, origin string
+		var prompt, completion, total, reasoning *int64
+		var cost *float64
+		var duration int64
+		var at time.Time
+		if err = callRows.Scan(&kind, &provider, &requested, &returned, &requestID, &outcome, &prompt, &completion, &total, &reasoning, &cost, &origin, &duration, &at); err != nil {
+			break
+		}
+		if cost != nil {
+			knownCost += *cost
+		} else {
+			unknownCostCalls++
+		}
+		modelCalls = append(modelCalls, map[string]any{"kind": kind, "provider": provider, "requested_model": requested, "returned_model": returned, "request_id": requestID, "outcome": outcome, "prompt_tokens": prompt, "completion_tokens": completion, "total_tokens": total, "reasoning_tokens": reasoning, "estimated_cost_usd": cost, "cost_origin": origin, "duration_ms": duration, "created_at": at})
+	}
+	if err == nil {
+		err = callRows.Err()
+	}
+	callRows.Close()
+	if err != nil {
+		fail(w, 500, "Could not load model usage.")
+		return
+	}
+	write(w, 200, map[string]any{"job_id": id, "question": question, "question_raw": rawQuestion, "research_mode": mode, "job_status": jobStatus, "stage": stage, "attempts": attempts, "owner": owner, "selected_source_ids": selectedSources, "created_at": createdAt, "finished_at": finishedAt, "answer_id": answerID, "answer": answer, "answer_status": answerStatus, "answer_model": answerModel, "answer_revision": answerRevision, "prompt_revision": promptRevision, "embedding_model": embeddingModel, "embedding_revision": embeddingRevision, "metrics": metrics, "searches": searches, "candidates": candidates, "claims": claims, "logs": logs, "model_calls": modelCalls, "model_usage_summary": map[string]any{"call_count": len(modelCalls), "known_estimated_cost_usd": knownCost, "unknown_cost_call_count": unknownCostCalls}})
 }

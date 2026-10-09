@@ -26,7 +26,7 @@ x-backend: &backend
     - ./data/starter-corpus:/app/data/starter-corpus:ro
   environment: &backend-env
     DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.prod}@127.0.0.1:${POSTGRES_PORT:-5437}/homeopath?sslmode=disable
-    AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+    AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
     AI_BASE_URL: ${AI_BASE_URL:-http://127.0.0.1:1234/v1}
     # Provider-specific requirements are validated by the backend.
     DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:-}

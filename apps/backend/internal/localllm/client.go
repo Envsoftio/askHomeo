@@ -67,6 +67,9 @@ func FromEnv() (Config, error) {
 	if e != nil {
 		return c, fmt.Errorf("chat provider: %w", e)
 	}
+	if c.ChatProvider == "deepinfra" && strings.HasPrefix(c.AnswerModel, "zai-org/GLM-5.3") && c.ChatReasoningEffort != "" && c.ChatReasoningEffort != "low" && c.ChatReasoningEffort != "high" && c.ChatReasoningEffort != "max" {
+		return c, errors.New("DeepInfra GLM-5.3 CHAT_REASONING_EFFORT must be low, high or max")
+	}
 	if value := strings.TrimSpace(os.Getenv("CHAT_MAX_TOKENS")); value != "" {
 		c.ChatMaxTokens, e = strconv.Atoi(value)
 		if e != nil || c.ChatMaxTokens < 1 || c.ChatMaxTokens > 65536 {
@@ -139,8 +142,45 @@ func (c Config) chatEndpoint() (string, string, string) {
 }
 
 type Client struct {
-	Config Config
-	HTTP   *http.Client
+	Config     Config
+	HTTP       *http.Client
+	RecordCall func(context.Context, Call)
+}
+
+// Call contains provider metadata only; prompts and response bodies are never recorded.
+type Call struct {
+	Kind, Provider, RequestedModel, ReturnedModel, RequestID, Outcome string
+	PromptTokens, CompletionTokens, TotalTokens, ReasoningTokens      *int64
+	EstimatedCostUSD                                                  *float64
+	Duration                                                          time.Duration
+}
+
+type ownerKey struct{}
+type Owner struct{ Kind, ID string }
+
+func WithOwner(ctx context.Context, kind, id string) context.Context {
+	return context.WithValue(ctx, ownerKey{}, Owner{Kind: kind, ID: id})
+}
+
+func OwnerFromContext(ctx context.Context) Owner {
+	owner, _ := ctx.Value(ownerKey{}).(Owner)
+	return owner
+}
+
+type usage struct {
+	PromptTokens            *int64   `json:"prompt_tokens"`
+	CompletionTokens        *int64   `json:"completion_tokens"`
+	TotalTokens             *int64   `json:"total_tokens"`
+	EstimatedCost           *float64 `json:"estimated_cost"`
+	CompletionTokensDetails struct {
+		ReasoningTokens *int64 `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
+}
+
+func (c *Client) record(ctx context.Context, call Call) {
+	if c.RecordCall != nil {
+		c.RecordCall(ctx, call)
+	}
 }
 
 func New(c Config) *Client {
@@ -169,19 +209,17 @@ func (c *Client) post(ctx context.Context, baseURL, key, path string, body any, 
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		msg, _ := io.ReadAll(io.LimitReader(res.Body, 512))
-		return providerHTTPError{StatusCode: res.StatusCode, Message: strings.TrimSpace(string(msg))}
+		return providerHTTPError{StatusCode: res.StatusCode}
 	}
 	return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(out)
 }
 
 type providerHTTPError struct {
 	StatusCode int
-	Message    string
 }
 
 func (e providerHTTPError) Error() string {
-	return fmt.Sprintf("model provider returned HTTP %d: %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("model provider returned HTTP %d", e.StatusCode)
 }
 func (c *Client) Models(ctx context.Context) (map[string]bool, error) {
 	models := map[string]bool{}
@@ -247,7 +285,9 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 	}
 	provider, baseURL, key := c.Config.embeddingEndpoint()
 	var v struct {
+		ID    string `json:"id"`
 		Model string `json:"model"`
+		Usage usage  `json:"usage"`
 		Data  []struct {
 			Index     int       `json:"index"`
 			Embedding []float32 `json:"embedding"`
@@ -257,9 +297,16 @@ func (c *Client) EmbedBatch(ctx context.Context, texts []string) ([][]float32, e
 	if len(inputs) == 1 {
 		input = inputs[0]
 	}
-	if e := c.post(ctx, baseURL, key, "/embeddings", map[string]any{"model": c.Config.EmbeddingModel, "input": input}, &v); e != nil {
+	started := time.Now()
+	e := c.post(ctx, baseURL, key, "/embeddings", map[string]any{"model": c.Config.EmbeddingModel, "input": input}, &v)
+	call := Call{Kind: "embedding", Provider: provider, RequestedModel: c.Config.EmbeddingModel, ReturnedModel: v.Model, RequestID: v.ID, Duration: time.Since(started), PromptTokens: v.Usage.PromptTokens, CompletionTokens: v.Usage.CompletionTokens, TotalTokens: v.Usage.TotalTokens, EstimatedCostUSD: v.Usage.EstimatedCost}
+	if e != nil {
+		call.Outcome = "provider_error"
+		c.record(ctx, call)
 		return nil, e
 	}
+	call.Outcome = "response_received"
+	defer c.record(ctx, call)
 	if len(v.Data) != len(inputs) {
 		return nil, fmt.Errorf("embedding response has wrong count")
 	}
@@ -300,7 +347,9 @@ func (c *Client) EmbeddingInput(text string) string {
 func (c *Client) Chat(ctx context.Context, system, user string) (string, error) {
 	provider, baseURL, key := c.Config.chatEndpoint()
 	type chatResponse struct {
+		ID    string `json:"id"`
 		Model string `json:"model"`
+		Usage usage  `json:"usage"`
 		Error struct {
 			Message string `json:"message"`
 		} `json:"error"`
@@ -322,17 +371,28 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 	if provider == "lmstudio" {
 		body["temperature"] = 0
 	}
-	if c.Config.ChatReasoningEffort != "" {
+	if provider == "deepinfra" && strings.HasPrefix(c.Config.AnswerModel, "zai-org/GLM-5.3") {
+		effort := c.Config.ChatReasoningEffort
+		if effort == "" {
+			effort = "low"
+		}
+		body["reasoning_effort"] = effort
+		body["clear_thinking"] = true
+		body["response_format"] = map[string]string{"type": "json_object"}
+	} else if c.Config.ChatReasoningEffort != "" {
 		body["reasoning"] = map[string]string{"effort": c.Config.ChatReasoningEffort}
 	}
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		var v chatResponse
+		started := time.Now()
 		err := c.post(ctx, baseURL, key, "/chat/completions", body, &v)
+		providerFailed := err != nil
+		call := Call{Kind: "chat", Provider: provider, RequestedModel: c.Config.AnswerModel, ReturnedModel: v.Model, RequestID: v.ID, Duration: time.Since(started), PromptTokens: v.Usage.PromptTokens, CompletionTokens: v.Usage.CompletionTokens, TotalTokens: v.Usage.TotalTokens, ReasoningTokens: v.Usage.CompletionTokensDetails.ReasoningTokens, EstimatedCostUSD: v.Usage.EstimatedCost}
 		retry := false
 		if err == nil {
 			switch {
 			case len(v.Choices) == 0:
-				err = fmt.Errorf("answer model returned no choices: %s", v.Error.Message)
+				err = errors.New("answer model returned no choices")
 				retry = true
 			case len(v.Choices) != 1:
 				err = fmt.Errorf("answer model returned %d choices", len(v.Choices))
@@ -341,13 +401,20 @@ func (c *Client) Chat(ctx context.Context, system, user string) (string, error) 
 			case provider == "lmstudio" && v.Model != "" && v.Model != c.Config.AnswerModel:
 				err = fmt.Errorf("answer response used model %q", v.Model)
 			default:
+				call.Outcome = "success"
+				c.record(ctx, call)
 				return v.Choices[0].Message.Content, nil
 			}
 		} else {
 			var providerError providerHTTPError
 			retry = errors.As(err, &providerError) && (providerError.StatusCode == 429 || providerError.StatusCode >= 500)
 		}
-		if !retry || attempt == 4 {
+		call.Outcome = "invalid_response"
+		if providerFailed {
+			call.Outcome = "provider_error"
+		}
+		c.record(ctx, call)
+		if !retry || attempt == 2 {
 			return "", err
 		}
 		wait := time.NewTimer(time.Duration(1<<(attempt+1)) * time.Second)

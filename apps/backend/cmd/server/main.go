@@ -11,6 +11,8 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/google/uuid"
+
 	"homeopath-poc/backend/internal/core"
 	"homeopath-poc/backend/internal/httpapi"
 	"homeopath-poc/backend/internal/ingest"
@@ -46,6 +48,28 @@ func main() {
 		log.Fatal(err)
 	}
 	model := localllm.New(cfg)
+	model.RecordCall = func(callCtx context.Context, call localllm.Call) {
+		owner := localllm.OwnerFromContext(callCtx)
+		var ownerID any
+		if owner.ID != "" {
+			id, parseErr := uuid.Parse(owner.ID)
+			if parseErr == nil {
+				ownerID = id
+			} else {
+				owner.Kind = ""
+			}
+		}
+		costOrigin := "unknown"
+		if call.EstimatedCostUSD != nil {
+			costOrigin = "provider_reported"
+		}
+		writeCtx, cancelWrite := context.WithTimeout(context.WithoutCancel(callCtx), 3*time.Second)
+		defer cancelWrite()
+		_, writeErr := store.DB.Exec(writeCtx, `INSERT INTO model_calls(owner_kind,owner_id,kind,provider,requested_model,returned_model,provider_request_id,outcome,prompt_tokens,completion_tokens,total_tokens,reasoning_tokens,estimated_cost_usd,cost_origin,duration_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, owner.Kind, ownerID, call.Kind, call.Provider, call.RequestedModel, call.ReturnedModel, call.RequestID, call.Outcome, call.PromptTokens, call.CompletionTokens, call.TotalTokens, call.ReasoningTokens, call.EstimatedCostUSD, costOrigin, call.Duration.Milliseconds())
+		if writeErr != nil {
+			log.Printf("save model call metadata: %v", writeErr)
+		}
+	}
 	if *mode == "worker" {
 		workerCtx, cancelWorker := context.WithCancel(ctx)
 		defer cancelWorker()

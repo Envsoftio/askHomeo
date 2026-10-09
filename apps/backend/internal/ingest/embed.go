@@ -64,7 +64,7 @@ func (w *Worker) embed(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	}
 	if len(passages) > 0 {
 		step, cancel := context.WithTimeout(ctx, 60*time.Second)
-		vectors, err := w.Model.EmbedBatch(step, passages)
+		vectors, err := w.Model.EmbedBatch(localllm.WithOwner(step, "embedding_job", jobID.String()), passages)
 		cancel()
 		if err != nil {
 			return err

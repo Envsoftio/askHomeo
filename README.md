@@ -4,41 +4,42 @@ Product planning: [Product requirements and development direction](Homeopathy_AI
 
 ## Run
 
-1. Copy `.env.example` to `.env`, set `ADMIN_USERNAME` and `ADMIN_PASSWORD`, and set `OPENROUTER_API_KEY`. Keep the file private.
-2. The local example uses OpenRouter for both chat and embeddings. No local model server is needed.
+1. Copy `.env.example` to `.env`, set `ADMIN_USERNAME` and `ADMIN_PASSWORD`, and set `DEEPINFRA_API_KEY`. Keep the file private.
+2. The local example uses DeepInfra for both chat and embeddings. No local model server is needed.
 3. Run `docker compose --profile dev up --build` from this directory and open <http://127.0.0.1:8088>. Sign in with `ADMIN_USERNAME` and `ADMIN_PASSWORD` from `.env`. Reviewers can select **Sign in as reviewer** and use their reviewer token.
 
 For local database inspection, open Adminer at <http://127.0.0.1:8089>. Select **PostgreSQL** and use server `db`, username `homeopath`, database `homeopath`, and the `POSTGRES_PASSWORD` from `.env` (or `localdev` if unset). Adminer starts only with the `dev` Compose profile.
 
-For an existing `.env`, configure both hosted endpoints:
+For an existing `.env`, set both explicit provider selectors and matching model settings:
 
 ```dotenv
-CHAT_PROVIDER=openrouter
-EMBEDDING_PROVIDER=openrouter
-OPENROUTER_API_KEY=replace-with-your-openrouter-api-key
-CHAT_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
-EMBEDDING_MODEL=baai/bge-m3
-EMBEDDING_INPUT_STYLE=plain
-EMBEDDING_REVISION=openrouter-baai-bge-m3-unpinned
-EMBEDDING_DIMENSIONS=1024
+AI_PROVIDER=deepinfra
+CHAT_PROVIDER=deepinfra
+EMBEDDING_PROVIDER=deepinfra
+DEEPINFRA_API_KEY=replace-with-your-deepinfra-api-key
+CHAT_MODEL=zai-org/GLM-5.3
+CHAT_REASONING_EFFORT=low
 CHAT_MAX_TOKENS=4096
-CHAT_REASONING_EFFORT=none
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_INPUT_STYLE=plain
+EMBEDDING_REVISION=deepinfra-BAAI-bge-m3-plain-v1
+EMBEDDING_DIMENSIONS=1024
 MODEL_REQUEST_TIMEOUT_SECONDS=300
 ```
 
 After adding your real key, run `docker compose --profile dev up -d --build api worker` to apply the settings. If the database already contains sources indexed with Nomic, reindex each published source using **Sources → Reindex** (or `POST /api/v1/sources/{id}/reindex` as an administrator) and wait for READY before asking questions. The worker batches hosted embeddings during reindexing.
 
-The free Nemotron endpoint can be temporarily overloaded or rate limited. The app retries transient chat responses and shows a provider-busy state in Activity when a question must be retried. `CHAT_REASONING_EFFORT=none` leaves the output budget for the evidence table; another model may need a different effort setting or no reasoning setting. A short answer may still take a few minutes because citation checks call the model after retrieval.
+DeepInfra may be temporarily overloaded or rate limited. The app retries transient chat responses up to three times within the answer job and shows a provider-busy state in Activity when the job must be retried. GLM-5.3 uses `reasoning_effort=low` by default; `CHAT_MAX_TOKENS` also bounds reasoning output. A short answer may still take a few minutes because citation checks call the model after retrieval.
 
-`CHAT_PROVIDER` and `EMBEDDING_PROVIDER` are independent. Change `CHAT_MODEL` to any OpenRouter chat model ID to compare LLMs without changing the search index; `nvidia/nemotron-3-ultra-550b-a55b:free` is only an example. Both the API and worker need the same settings, and the OpenRouter key stays in their server-side environment. If you change the embedding model, provider, or input style, set its matching `EMBEDDING_DIMENSIONS` and a new `EMBEDDING_REVISION`, then reindex prepared sources before asking questions. An existing Nomic index cannot be searched with another embedding model.
+`CHAT_PROVIDER` and `EMBEDDING_PROVIDER` are independent. Change `CHAT_MODEL` to compare LLMs without changing the search index. Both the API and worker need the same settings, and the DeepInfra key stays in their server-side environment. If you change the embedding model, provider, or input style, set its matching `EMBEDDING_DIMENSIONS` and a new `EMBEDDING_REVISION`, then reindex prepared sources before asking questions. An existing Nomic index cannot be searched with another embedding model.
 
-The [OpenRouter chat](https://openrouter.ai/docs/api/api-reference/chat/send-chat-completion-request) and [embeddings](https://openrouter.ai/docs/api/api-reference/embeddings/create-embeddings) endpoints both use the same API key. The example model IDs are [Nemotron 3 Ultra (free)](https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free) and [bge-m3](https://openrouter.ai/baai/bge-m3).
+The example uses [DeepInfra GLM-5.3](https://deepinfra.com/blog/glm-5-3-model-integration-guide) and [BGE-M3](https://deepinfra.com/models/embeddings). Admin answer evaluation reports include provider returned token usage and estimated cost for each attempt; unknown usage and cost remain unknown.
 
 `CHAT_PROVIDER` and `EMBEDDING_PROVIDER` accept `lmstudio`, `openrouter`, `deepinfra`, or `openai`. For another OpenAI-compatible service, use `openai` with the corresponding `CHAT_BASE_URL`/`CHAT_API_KEY` or `EMBEDDING_BASE_URL`/`EMBEDDING_API_KEY`. `AI_PROVIDER` and `AI_BASE_URL` remain fallbacks for existing configurations. `CHAT_MAX_TOKENS` controls the output limit, `CHAT_REASONING_EFFORT` is optional for reasoning models, `MODEL_REQUEST_TIMEOUT_SECONDS` sets the provider request timeout (120 seconds by default), and `CHAT_PROMPT_SUFFIX` is available for a model-specific suffix if needed; the application does not append one automatically. `EMBEDDING_INPUT_STYLE` can be `plain` or `prefixed` for embedding models with different query/document input conventions. If no revision is provided, the app records a provider/model-specific `unpinned` marker.
 
 ## Production model provider
 
-Copy `.env.prod.example` to `.env.prod` on the server, replace its credentials, and run `bash scripts/deploy-prod.sh`. Production uses `docker-compose.prod.yml`; see [production deployment setup](docs/production-deployment.md) for server and GitHub settings. For OpenRouter, set `AI_PROVIDER=openrouter` and `OPENROUTER_API_KEY` in `.env.prod`; no `AI_BASE_URL` is needed. The API and worker keep the key server-side. DeepInfra and LM Studio remain available with their matching provider settings.
+Copy `.env.prod.example` to `.env.prod` on the server, replace its credentials, and run `bash scripts/deploy-prod.sh`. Production uses `docker-compose.prod.yml`; see [production deployment setup](docs/production-deployment.md) for server and GitHub settings. For DeepInfra, set both `CHAT_PROVIDER=deepinfra` and `EMBEDDING_PROVIDER=deepinfra` plus `DEEPINFRA_API_KEY` in `.env.prod`; no `AI_BASE_URL` is needed. The API and worker keep the key server-side. DeepInfra and LM Studio remain available with their matching provider settings.
 
 The production embedding model produces 1,024-dimensional vectors and is incompatible with the development Nomic index. For an existing database, call `POST /api/v1/sources/{id}/reindex` as an administrator for every published source after switching providers, and wait until all sources are READY before asking questions. New sources are indexed with the configured model when published. Do not mix sources prepared under the two embedding models in one answer. Run the held-out evaluation with human citation review before treating the hosted setup as release-ready.
 

@@ -125,6 +125,8 @@ func TestOpenRouterRoutesChatAndEmbeddingsWithoutModelSpecificPrompt(t *testing.
 func TestChatRetriesEmptyAndTransientProviderResponses(t *testing.T) {
 	c := New(Config{ChatProvider: "openrouter", ChatBaseURL: "https://openrouter.ai/api/v1", ChatAPIKey: "test-key", AnswerModel: "example/chat"})
 	calls := 0
+	var recorded []Call
+	c.RecordCall = func(_ context.Context, call Call) { recorded = append(recorded, call) }
 	c.HTTP.Transport = roundTrip(func(_ *http.Request) (*http.Response, error) {
 		calls++
 		switch calls {
@@ -137,8 +139,8 @@ func TestChatRetriesEmptyAndTransientProviderResponses(t *testing.T) {
 		}
 	})
 	answer, err := c.Chat(context.Background(), "system", "user")
-	if err != nil || answer != "READY" || calls != 3 {
-		t.Fatalf("answer=%q calls=%d err=%v", answer, calls, err)
+	if err != nil || answer != "READY" || calls != 3 || len(recorded) != 3 || recorded[0].Outcome != "provider_error" || recorded[1].Outcome != "invalid_response" || recorded[2].Outcome != "success" {
+		t.Fatalf("answer=%q calls=%d recorded=%+v err=%v", answer, calls, recorded, err)
 	}
 }
 
@@ -242,5 +244,39 @@ func TestDeepInfraRequests(t *testing.T) {
 	answer, err := c.Chat(context.Background(), "system", "question")
 	if err != nil || answer != "answer" || calls != 2 {
 		t.Fatalf("hosted calls: answer=%q calls=%d err=%v", answer, calls, err)
+	}
+}
+
+func TestDeepInfraGLM53PayloadAndUsage(t *testing.T) {
+	c := New(Config{ChatProvider: "deepinfra", ChatBaseURL: "https://api.deepinfra.com/v1/openai", ChatAPIKey: "test-key", AnswerModel: "zai-org/GLM-5.3", ChatMaxTokens: 2048, ChatReasoningEffort: "low"})
+	var calls []Call
+	c.RecordCall = func(_ context.Context, call Call) { calls = append(calls, call) }
+	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		format, ok := body["response_format"].(map[string]any)
+		if body["reasoning_effort"] != "low" || body["clear_thinking"] != true || body["reasoning"] != nil || body["max_tokens"] != float64(2048) || !ok || format["type"] != "json_object" {
+			t.Fatalf("wrong GLM payload: %v", body)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"id":"req-123","model":"zai-org/GLM-5.3","choices":[{"message":{"content":"{\"answer\":\"ok\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":15,"total_tokens":25,"estimated_cost":0.00012,"completion_tokens_details":{"reasoning_tokens":8}}}`))}, nil
+	})
+	answer, err := c.Chat(context.Background(), "system", "user")
+	if err != nil || answer == "" || len(calls) != 1 || calls[0].RequestID != "req-123" || *calls[0].TotalTokens != 25 || *calls[0].ReasoningTokens != 8 || *calls[0].EstimatedCostUSD != 0.00012 || calls[0].Outcome != "success" {
+		t.Fatalf("answer=%q calls=%+v err=%v", answer, calls, err)
+	}
+}
+
+func TestDeepInfraFailureDoesNotExposeProviderBody(t *testing.T) {
+	c := New(Config{ChatProvider: "deepinfra", ChatBaseURL: "https://api.deepinfra.com/v1/openai", ChatAPIKey: "test-key", AnswerModel: "zai-org/GLM-5.3"})
+	var calls []Call
+	c.RecordCall = func(_ context.Context, call Call) { calls = append(calls, call) }
+	c.HTTP.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{"error":"secret-token"}`))}, nil
+	})
+	_, err := c.Chat(context.Background(), "system", "user")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "secret-token") || len(calls) != 1 || calls[0].Outcome != "provider_error" {
+		t.Fatalf("error=%v calls=%+v", err, calls)
 	}
 }

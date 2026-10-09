@@ -37,7 +37,13 @@ Research decisions updated 2026-10-09: [GLM-first hosted inference, ingestion, r
 
 **Current delivery priority — confirmed 2026-10-09:** [Research core first](#36-research-core-first--confirmed-delivery-priority). Establish and validate ingestion, retrieval and trustworthy cited answers before expanding other product areas. Section 36 takes precedence over earlier delivery sequences; evaluation starts with the core, and broad source ingestion follows validation on a representative corpus.
 
-**Latest clarification — 2026-10-09:** [Assisted evaluation, research modes, source organization and isolated email delivery](#37-assisted-evaluation-research-modes-source-organization-and-isolated-email-delivery). Minimize manual evaluation work, retain user-selected Quick/Deep modes, start from the existing PRD book references, and isolate ZeptoMail delivery from application and research execution. Section 36's delivery priority remains unchanged.
+**Clarifications — 2026-10-09:** [Assisted evaluation, research modes, source organization and isolated email delivery](#37-assisted-evaluation-research-modes-source-organization-and-isolated-email-delivery). Minimize manual evaluation work, retain user-selected Quick/Deep modes, and isolate ZeptoMail delivery from application and research execution. Section 36's delivery priority remains unchanged.
+
+**Latest starting-point correction — 2026-10-09:** [Fresh corpus on empty staging](#38-fresh-corpus-on-empty-staging). The user reports staging is deployed with no data. Begin with fresh source intake and build evaluation around the newly prepared corpus; restoring Nash/Farrington data or their old questions is not a prerequisite. Section 38 qualifies earlier baseline-restoration and source-selection instructions.
+
+**First development task — 2026-10-09:** [CORE-01: Use DeepInfra for embeddings and cited answers in staging](#39-core-01-use-deepinfra-for-embeddings-and-cited-answers-in-staging). The user reports changing the provider to DeepInfra and requests this task first. Verify the effective configuration and complete the provider integration before the first fresh-source answer check. Task creation does not establish live connectivity or successful model calls.
+
+**Multi-format ingestion clarification — 2026-10-09:** [HTML, TXT and XML source intake](#40-html-txt-and-xml-source-intake-including-http-only-sources) is required in the functional source UI and backend. Support public HTTP-only sources as well as HTTPS, bounded collection of linked book pages, format-aware extraction, coverage review and non-PDF citations. These are requirements awaiting implementation; section 39 retains its staging acceptance scope.
 
 ## 2. Product understanding
 
@@ -705,7 +711,7 @@ These entries are candidate epics/tasks for future sessions, not claims of work 
 | DATA-02 | Prepare classical seed corpus | DATA-01 | Selected 8–12 editions or initial smaller useful set acquired, reviewed and cited correctly; no duplicate edition inflation. |
 | DATA-03 | Investigate one structured repertory source | DATA-01 | OOREP/other candidate assessed for export, licence, provenance, coverage and grade fidelity; one edition chosen. |
 | DATA-04 | Define evidence-type and access-state metadata | DATA-01 | Metadata-only, abstract-only, full text, historical, case, trial, review and guideline states represented and used in UI/retrieval. |
-| DATA-05 | Implement structured text acquisition | DATA-04 | Eligible XML/HTML can produce stable section/offset citations without invented pages; PDF/OCR fallback remains. |
+| DATA-05 | Implement structured text acquisition | DATA-04 | Implement section 40: HTML/TXT/XML upload and URL intake, bounded HTML collection, HTTP/HTTPS fetching, coverage review and stable section/offset citations; PDF/OCR fallback remains. |
 | DATA-06 | Define India-specific manual/reference intake | DATA-01 | AYUSH/CCRH/IJRH/CTRI records saved under appropriate access/reuse routes; blocked bulk access does not block other sources. |
 | DATA-07 | Normalize entities and terminology | DATA-02, DATA-04 | Remedy aliases, conditions and bibliographic identifiers linked without conflating distinct entities/preparations. |
 | DATA-08 | Add correction/retraction refresh | Bibliographic connectors | Updated status affects eligible evidence and is surfaced on existing research where appropriate. |
@@ -764,13 +770,15 @@ Completion evidence and documentation updates:
 
 No ticket should use “add AI” or “support research” as its only acceptance criterion. Require an observable user workflow and evidence of correct behavior. Low-impact reversible changes do not need artificial testing bureaucracy; choose checks proportional to the actual risk and behavior changed.
 
+From CORE-02 onward, keep implementation task specifications in separate files under `tasks/`. This PRD retains product requirements, decisions, delivery order and a short link to each task; update it when those change instead of duplicating task details here.
+
 ## 22. Evaluation and release evidence
 
 ### 22.1 Quality measures
 
 Measure retrieval recall against reviewed passages, supported-claim precision, expected-point completeness, correct author/edition attribution, citation resolution, abstention on out-of-scope questions, performance/cost and operational recovery. Report each metric with its dataset, method, reviewed examples and limitations. Do not substitute candidate citation coverage for correctness.
 
-The inherited PRD calls for a scored held-out cross-source set, including at least ten Nash/Farrington comparison questions and five outside-corpus questions. Preserve those requirements while growing toward the proposed 50-task product set. Documentation's draft 30-question evaluation and proposed future 50-task coverage are not completed benchmark results.
+The inherited PRD calls for a scored held-out cross-source set, including at least ten comparison questions and five outside-corpus questions. Section 38 supersedes the earlier Nash/Farrington-specific corpus requirement: author/source comparisons must use the freshly selected corpus. Preserve the question-category coverage while growing toward the proposed 50-task product set. Documentation's draft 30-question evaluation and proposed future 50-task coverage are not completed benchmark results.
 
 | Module | Representative failure cases to include |
 |---|---|
@@ -1861,7 +1869,7 @@ Milestone: **Research core — trustworthy ingestion, retrieval and cited answer
 
 | Order | Work | Observable outcome |
 |---|---|---|
-| 1 | Establish the measurable baseline | Restore the existing evaluation assets/contract, review gold evidence and expected answer points, and record current retrieval, citation and answer failures. Inspect representative ingestion failures before choosing fixes. |
+| 1 | Establish the measurable baseline from fresh staging sources | Follow section 38: import and validate the first sources, create questions tied to their exact editions/revisions, review gold evidence and expected answer points, and record current ingestion, retrieval, citation and answer failures. Reuse the evaluation tooling and category contract. |
 | 2 | Improve source ingestion | Preserve text, headings, tables, editions, original page/span mappings and QA decisions; uncertain OCR remains visible for review. Test context expansion before structural rechunking where appropriate. |
 | 3 | Improve retrieval | Evaluate hybrid search, heading/neighbor context and reranking against the baseline; preserve source restrictions and measure relevance and coverage. |
 | 4 | Integrate hosted GLM correctly | Supported provider parameters, validated structured responses, token usage, costs and bounded failures. This work can begin alongside ingestion improvements after capturing the baseline. |
@@ -1890,7 +1898,7 @@ Completion requires a reviewed, versioned evaluation report showing retrieval qu
 
 Also demonstrate the full workflow in section 36.1, including original-page citation resolution and reopening a saved answer without regenerating it. Preserve earlier citation lineage through ingestion/index changes and confirm source restrictions remain enforced. Use focused existing checks and concise manual acceptance steps under section 33.6.
 
-**Immediate next implementation task:** restore the evaluation baseline and inspect representative ingestion failures, producing a concrete failure list that drives ingestion and retrieval changes. This documentation update records priority only; it does not execute that task, activate GLM, approve a spending budget or mark the milestone complete.
+**Immediate next implementation task:** CORE-01 in section 39 completes and verifies the DeepInfra integration, using the first fresh-source answer as its staging acceptance check. Continue fresh source-intake validation and build a new evaluation baseline from the prepared corpus as described in section 38. This documentation update records priority only; it does not execute the task, approve a spending budget or mark the milestone complete.
 
 ## 37. Assisted evaluation, research modes, source organization and isolated email delivery
 
@@ -1923,7 +1931,7 @@ Measure latency and cost separately by mode and show approximate timing only aft
 
 ### 37.3 Existing book references and manageable source organization
 
-**Confirmed starting pool:** use the book references in sections 16–17, including Nash, Farrington, Kent, Boericke and Allen as applicable. Select exact editions/assets from that pool for the initial baseline; verify availability and use permissions rather than assuming the references are already acquired. Preserve section 36.2's clean-book/difficult-scan coverage and complementary papers with tables and numerical findings.
+**Earlier starting pool, qualified by section 38:** the book references in sections 16–17 remain discovery options. The latest user direction is to begin with a fresh corpus on empty staging, without assuming Nash/Farrington or old evaluation records are present or must be restored. Select exact editions/assets and verify availability and use permissions. Preserve section 36.2's clean-book/difficult-scan coverage and complementary papers with tables and numerical findings.
 
 **Observed implementation:** source intake and review already store bibliographic metadata, edition/repository information, rights state and processing/publication state. The inspected source schema, API and Vue forms do not provide a general source category/tag system. DATA-01, WS-16 and section 32 describe planned classification/library behavior; they are not evidence of implemented controls. DOI work type and page classification are separate from source organization.
 
@@ -1953,15 +1961,171 @@ Recommended minimal organization, extending the existing Sources workflow:
 - Verification and password-reset flows inherently depend on the user receiving a valid link. During an outage, keep verification pending and provide safe resend/recovery states; never bypass email verification, issue access on a failed send, or report provider acceptance as inbox delivery. Expired/superseded account links must not be sent as usable recovery links after a backlog clears.
 - Acceptance: simulate ZeptoMail timeout/rejection, invalid mail configuration and a stopped/restarted mail worker. Existing sign-in, source intake, research completion and saved-answer access must continue; pending/failed deliveries must remain visible and recoverable. Confirm retrying mail does not repeat the business action, account links retain expiry/single-use protections, and duplicate completion events do not create duplicate notification records.
 
-Sections 37.1–37.4 record requirements, not implemented category/tag controls, an email worker, model calls or automatic approval behavior. Section 37.5 records the subsequent source UI implementation. The next research-quality task remains restoring the evaluation baseline, with assisted review preparation to minimize manual effort.
+Sections 37.1–37.4 record requirements, not implemented category/tag controls, an email worker, model calls or automatic approval behavior. Section 37.5 records the subsequent source UI implementation. Section 38 updates the next task to fresh staging intake followed by a new evaluation baseline, with assisted review preparation to minimize manual effort.
 
 ### 37.5 Functional source-ingestion UI, beyond the POC
 
 **Confirmed clarification — 2026-10-09:** the POC interface is not presentable enough. A functional, clearer source-ingestion screen is required as part of operating the research core. This qualifies the earlier minimal-screen scope, while preserving existing source APIs, permissions, processing and publication behavior.
 
 - Make the source library the main screen, with title/author search, status filters, clear processing state and the next action for each source. Distinguish processing, review needed, ready for questions and unavailable material. Never label an incompatible index ready for current questions.
-- Use a deliberate Add source flow with one intake method visible at a time: upload PDF, direct PDF URL, catalogue search or DOI lookup. Keep optional source details secondary, validate file type/size, retain inputs after errors, and show an accepted-source confirmation with a link to progress. Clear a successful import's metadata before the next file so editions and rights statements do not leak between submissions.
+- Use a deliberate Add source flow with one intake method visible at a time: upload a supported file (PDF, HTML, TXT or XML), import a web/file URL (HTTP or HTTPS), catalogue search or DOI lookup. The added formats and website collection follow section 40 and remain pending implementation; existing PDF controls alone do not satisfy them. Keep optional source details secondary, validate file type/size, retain inputs after errors, and show an accepted-source confirmation with a link to progress. Clear a successful import's metadata before the next file so editions and rights statements do not leak between submissions.
 - Keep source review reachable from the library, with a return path, progress steps, automatic-check results, uncertain pages, source details, rights decisions and publication blockers. Explain that background work continues after acceptance. Treat metadata-only DOI references separately from searchable full text.
 - Support keyboard use and small screens. Use understandable loading, empty, success and failure states. Preserve working Quick/Deep behavior; broader Ask presentation can be improved in its own feature slice.
 
 **Implementation checkpoint:** the source library component, focused intake panel, file selection/drop validation, progressive metadata fields, progress navigation and source-review presentation were implemented in the frontend during this clarification. Existing backend routes are reused. Category/tag persistence, the ZeptoMail worker and migration to the selected shadcn-vue component stack remain separate implementation work; this UI change does not mark them complete. Source listing currently uses the existing endpoint's latest-50-source limit; library-wide server search/pagination remains a follow-up as the corpus grows. Frontend build and focused UI verification are reported separately from live ingestion acceptance.
+
+## 38. Fresh corpus on empty staging
+
+**Confirmed clarification — 2026-10-09:** the user reports that the app has been deployed to staging and its data is empty. Start development validation with fresh sources. This is a user-reported deployment state, not a live staging inspection. No source titles have been selected by this clarification.
+
+The first source workflow is **Import and validate the first staging source**, with DeepInfra integration now the first development task under CORE-01 in section 39. Select a usable PDF and record its exact edition and acquisition details; exercise the existing intake, extraction/OCR, page review, rights/content/publication gates and compatible READY index. Ask a source-specific question, open its original-page citation and reopen the saved answer. Record and fix observed failures across the relevant UI, API and worker flow. Inspect staging configuration and source availability when executing this task.
+
+Then expand to the representative mix in section 36.2 and **create a fresh evaluation baseline**. Prepare questions, suggested passages and expected answer points from those actual source revisions. Reuse/adapt the existing runner and scorer; old document titles, database IDs and reviewed labels must not be carried over as evidence for the new corpus. Restoring the old Nash/Farrington corpus or its question files is not a development prerequisite.
+
+Begin with a few assisted-review examples to establish the workflow, then complete the existing 30-case category contract: 10 single-source, 10 comparison/multi-passage, 5 author/edition-constrained and 5 unsupported questions. Version the new dataset, retain a held-out subset, and preserve the inherited quality thresholds and human-review requirements. A successful first-source check is progress toward the milestone, not full quality acceptance.
+
+This clarification supersedes earlier instructions to restore a historical baseline or require Nash/Farrington comparisons. It changes the data starting point while retaining the existing application, research-core priority and evidence requirements. It does not authorize deleting any local data or establish that staging ingestion or evaluation has passed.
+
+## 39. CORE-01: Use DeepInfra for embeddings and cited answers in staging
+
+**Status:** Local implementation and smoke test complete; staging acceptance pending. Created 2026-10-09 at the user's request. The local API and worker used DeepInfra successfully with a user-authorized US$0.50 ceiling. See the [CORE-01 local verification record](docs/core-01-local-verification.md) for the exact source, jobs, citations, usage and limits. Staging configuration, rights and fresh-source acceptance remain unverified.
+
+**User outcome:** an administrator prepares a fresh source in staging and asks a question using DeepInfra. The app saves a checked answer with original-page citations and observable model usage, or a clear recoverable failure.
+
+**Related requirements:** ASK-02, ASK-03, ASK-05, ASK-07, TRUST-01–03; sections 34.2, 34.4, 35.1–35.6, 37.2 and 38.
+
+### 39.1 Baseline at task creation
+
+- [Model client](apps/backend/internal/localllm/client.go) already resolves DeepInfra credentials and its OpenAI-compatible endpoint independently for chat and embeddings. Both [development Compose](docker-compose.yml) and [production Compose](docker-compose.prod.yml) pass `DEEPINFRA_API_KEY` to API and worker processes.
+- `CHAT_PROVIDER` and `EMBEDDING_PROVIDER` override the `AI_PROVIDER` fallback. Changing only the fallback or adding a key does not override explicit OpenRouter selections.
+- `Chat` currently sends a generic `reasoning: {effort: ...}` object. The GLM/DeepInfra contract recorded in section 35 requires provider-aware parameters. The client validates finish reasons and performs bounded retries, but returns only answer text and discards provider usage/request metadata.
+- Existing embedding checks, durable jobs, claim verification and citation screens provide the foundation. Provider configuration alone does not verify the full ingestion-to-answer workflow.
+
+### 39.2 Scope and implementation
+
+1. **Verify effective configuration.** Inspect API and worker provider/model settings without exposing credentials. Use DeepInfra for chat and embeddings as the proposed first configuration, with `zai-org/GLM-5.3` and `BAAI/bge-m3`; verify the actual endpoint/model contract at implementation time. Keep BGE-M3 plain input and 1,024 dimensions unless a validated configuration change is necessary. Set an explicit embedding revision and ensure API and worker agree. Update environment examples and deployment instructions to give one consistent setup.
+2. **Complete GLM request/response handling.** Send the supported DeepInfra reasoning parameter, initially explicit `low`, with bounded output and request/job time limits. Preserve other providers' parameter mappings. Validate structured evidence responses through the existing backend schema; use provider-enforced structure where supported. Handle malformed JSON, truncation, empty responses and provider errors without publishing unchecked claims.
+3. **Record usage and cost.** Capture provider request ID, requested/returned model, token categories, duration and outcome for chat/verification and embedding calls. Account for retries; missing usage/cost remains unknown. Calculate estimated cost from a dated price basis or retain provider-reported cost with its origin, avoiding double-counted reasoning tokens. Connect calls to the existing source/answer job where applicable and expose totals through the existing admin report. Recheck section 34.4 and existing storage before choosing schema changes.
+4. **Bound failures and spending.** Reconcile client retries with worker retries, timeouts and the agreed small staging experiment allowance. Invalid credentials/configuration must produce actionable errors without repeated paid work; transient failures must stay bounded. Confirm server-side secret handling and redact secrets from reports and logs.
+5. **Verify the first usable flow.** Run small embedding/chat connectivity checks, then prepare one permitted fresh PDF through existing review/publication gates and a compatible READY index. Exercise Quick and Deep with the same explicit source selection, inspect the original-page citation and reopen the saved answer. Record unrelated ingestion failures as visible follow-up work; unresolved failures prevent claiming this end-to-end acceptance passed.
+
+**Out of scope:** broad corpus import, reranker experiments, full 30-case evaluation, new account/email features, a new analytics dashboard, production cutover and staging-to-production data transfer. No old Nash/Farrington data is required.
+
+### 39.3 Dependencies, data and affected layers
+
+- Live acceptance needs the staging URL/access route, a valid server-side DeepInfra key, available billing and an explicit numerical test budget. Code changes and mocked verification can proceed before live access is available. The provider change alone does not supply a spending allowance.
+- Select one small, usable PDF with exact title/edition, acquisition record and publication rights; do not invent source IDs or reuse old evidence labels. Preserve the prepared source and its lineage for potential later production transfer.
+- Primary changes: Go model client and callers, job/report persistence as needed, environment examples and deployment guidance. Extend existing admin API/UI only as needed to inspect usage and failures; preserve Quick/Deep and source filters.
+- Reuse existing records where suitable. Any new table needs a short justification for the records it stores and why existing storage is insufficient; no new tables are prescribed by this task.
+- Changing only chat configuration does not require re-embedding. If any sources already exist when work starts, inspect index compatibility before changing embedding provider/model/input style/dimensions; create a compatible index as needed while preserving old citation lineage. The earlier empty-staging report is not permission to reset data.
+
+### 39.4 Acceptance and focused verification
+
+- API and worker use the intended DeepInfra configuration; keys are absent from browser payloads, logs and evaluation exports.
+- An embedding request returns valid vectors of the configured dimensions, and the fresh published source reaches compatible READY status.
+- Quick and Deep each produce a saved supported/partial answer with a resolving original-page citation for an answerable source-specific question. An unsupported question returns the appropriate insufficient-evidence result. The selected source scope remains enforced.
+- Reopening a saved answer does not call the model again. An invalid key, provider timeout/rate limit, malformed output or truncation produces the correct bounded failure/recovery behavior without publishing unsupported content.
+- The admin report shows actual recorded usage and cost provenance, including unknown values and attempted retries. A representative run's totals can be reconciled with its recorded calls.
+- Extend focused [model-client checks](apps/backend/internal/localllm/client_test.go) for DeepInfra payloads, response/usage handling and failures; reuse affected job/report checks. Run the Go checks relevant to changed packages and the frontend build if UI changes. Simulate failures with fixtures; reserve paid calls for the agreed small live check. Record live checks separately from mocked results.
+
+### 39.5 Completion and release record
+
+Attach the code changes, effective non-secret configuration, focused check results, fresh source/revision identity, sample saved-answer/citation references, usage totals and concise manual acceptance steps to this task's completion update. Keep live acceptance pending if access, funding, rights approval or a working source is missing. This task demonstrates provider integration and one source workflow; full research-quality acceptance remains the later reviewed baseline.
+
+Before deploying any schema change, back up the database and PDF assets together and describe migration compatibility. Retain the previous image and non-secret configuration for rollback, preserve prepared sources and citations, and keep any failed candidate index separate from the active compatible index. Reverting the chat provider alone must not delete or rebuild source data.
+
+**Next task:** [CORE-02 — Establish a fresh-source evaluation baseline](tasks/CORE-02.md). It starts with one complete permitted source and a few reviewed cases; the representative corpus and full 30-case release benchmark follow.
+
+
+## 40. HTML, TXT and XML source intake, including HTTP-only sources
+
+**Confirmed requirement — 2026-10-09:** Administrators need a working UI and backend to collect and prepare HTML, plain-text and XML sources, including public links available only over HTTP. Section 17 contains discovery leads in different formats, not a PDF-only library or an inventory of implemented connectors. Extend the existing Sources workflow end to end; accepting a URL without extracting and indexing its content does not satisfy this requirement.
+
+**Status:** Proposed implementation and acceptance contract. The reviewed code supports PDF intake and a specialized ALTO XML path for scanned books; it does not establish general HTML/TXT/XML intake, linked-page collection or non-PDF citation readiness. This section expands DATA-05 and section 37.5. Retain section 36's research-core priority and section 39's first-PDF staging acceptance; then validate a small representative non-PDF corpus before bulk collection. No application code, live crawl or deployment is claimed by this PRD update.
+
+### 40.1 User journey and source intake
+
+Use the established Vue/shadcn-vue source library, Go API and durable workers. Shared-library imports remain restricted to authorized administrators; this does not introduce public/private-user uploads.
+
+```text
+Add source → choose file or URL → detect format and preview
+ → choose collection scope when relevant → start background import
+ → inspect extraction and coverage → resolve publication blockers
+ → publish and build compatible index → ask and inspect citations
+```
+
+| Screen / step | Required behavior |
+|---|---|
+| Add source | Offer Upload file (PDF, HTML/HTM, TXT, XML), Web/file URL, Catalogue and DOI methods. Accept explicit HTTP and HTTPS URLs. Preserve input on failure and clear source-specific metadata after success. |
+| Detect and preview | Show detected format, title, original/final URL and a short extraction sample. Validate bytes and content type as well as extension; recognize extensionless endpoints. Explain mismatches, unsupported formats, login pages and empty extraction. Never silently import an HTML error page as a book. |
+| Collection scope | For HTML, offer This page or Linked book/collection pages. Default to one page; an index-page hint can suggest collection mode. Show editable allowed path and proposed scope before collection. TXT/XML default to the selected file/document, not recursive link discovery. |
+| Discovered pages | Show titles, URLs, chapter order where available, selected/excluded counts, exclusions and failed discovery. Allow selection/exclusion, search and preview. Navigation-only index pages remain provenance/discovery records unless they contain selected substantive content. |
+| Source details | Reuse title, author, edition, language, evidence category, tags and rights fields. Group chapters under the same work/edition, keeping each original page as an asset. Mark missing metadata for review; do not infer edition certainty from a URL. |
+| Import progress | Show discovery, download, parse, review, publication and indexing separately. Display discovered/selected/fetched/parsed/failed/excluded/indexed counts with explanations; counts are not interchangeable. Background work survives navigation and browser closure. |
+| Recovery | Provide failed-item details, retry failed items, cancel remaining collection and reopen the job. Preserve completed assets. Scope changes can rediscover links; they must not silently expand a running import. |
+| Extraction review | Provide a chapter/section list and sanitized original-versus-extracted preview. Show warnings for encoding, missing content, broken structure, tables and uncertain remedy grades. Support corrections as a new processing revision, preserving originals. |
+| Coverage and publication | Show collection coverage separately from RAG readiness. Failed selected pages, truncated discovery and unreviewed extraction must remain visible. An administrator may exclude failed items or explicitly publish a reviewed partial collection under existing publication rules; preserve omissions and label it Partial coverage. |
+| Reader and Ask | Navigate to a section/paragraph/rubric, highlight the exact cited passage in the saved revision, and offer the original URL. Display source format and partial coverage where relevant. Reuse source filters and Quick/Deep; metadata-only or incompatible/unready material cannot supply full-text evidence. |
+
+Use readable labels such as “Import web pages”, “Some chapters could not be downloaded” and “Ready for questions · Partial coverage”. Keep crawler settings in optional advanced controls, with useful defaults. Support keyboard navigation, small screens, persistent progress links and actionable empty/error states. An HTTP badge explains “Connection to source is unencrypted”; it does not require repeated confirmation for routine authorized public collection.
+
+### 40.2 Bounded discovery and collection
+
+- Fetch and parse server-side. The HTTPS application must not depend on browser requests to HTTP origins, CORS exceptions or mixed-content embedding. Serve saved, sanitized previews through authenticated application routes.
+- Use source adapters over a shared fetcher: generic static HTML, plain text and explicitly supported XML schemas; add source-specific adapters for complex works. Prefer usable official APIs/exports where available. Do not launch an unrestricted internet crawler.
+- Resolve relative links against the validated document/base URL. Follow only selected same-origin links within the configured work/path by default. Additional origins or paths must be explicitly included in the import scope. Exclude mail, script, logout, search, form-action and unrelated navigation links; never submit forms as part of discovery.
+- Normalize URLs carefully, remove fragments for fetching while retaining them as citation anchors, and deduplicate repeated URLs/assets. Do not discard meaningful query parameters or merge distinct editions because text looks similar. Treat canonical-link hints as suggestions, not authority to change scope.
+- Discover iteratively within a bounded frontier; surface additional pages found while fetching and keep exclusions persistent. Detect pagination cycles. Report whether discovery exhausted the permitted scope, hit a limit, or encountered failures. “Complete” means selected scoped collection completed, not proof that an entire website or book exists in the corpus.
+- Proposed starting limits: 200 selected documents per job, link depth 3, two concurrent requests per origin, at least one second between request starts per origin, 10 MiB per non-PDF document, 100 MiB total fetched/decompressed content and 30 seconds per request. Make these server-enforced and configurable; preserve existing PDF limits. Show limits before import and an explicit limit-reached recovery state. Bound parsing, redirects and total job runtime as well.
+- Respect applicable source access rules and robots directives, identify the collector, honor retry delays and use bounded backoff. Do not bypass login, paywalls, CAPTCHA or access denials. Keep existing rights/publication decisions separate from technical fetch success.
+- Static HTML is the initial adapter. If content requires JavaScript execution, report that limitation and offer an eligible file/export or later adapter; do not mark an empty shell successfully extracted. Uploaded HTML parses locally and must not trigger network requests to embedded resources or links unless the administrator starts a scoped URL collection.
+
+### 40.3 HTTP and HTTPS transport
+
+**HTTP-only public sources are supported, not rejected solely for lacking HTTPS.** Transport permission and content reuse/publication eligibility remain separate.
+
+- Accept explicit `http://` and `https://` links; for a scheme-less address try HTTPS first and present an HTTP retry option if needed. Honor an explicitly entered HTTP address. Follow HTTP-to-HTTPS redirects when the target passes scope and network checks.
+- Never silently downgrade a requested HTTPS URL after certificate/TLS failure, and never disable certificate verification. Show the failure and allow the administrator to explicitly retry the public source over HTTP, recording that decision. HTTPS-to-HTTP redirects likewise require an explicit recorded allowance for the import scope; do not ask again for every selected page in that scope.
+- HTTP acquisition is limited to public content: do not send application cookies, authorization headers, API keys or user credentials. Reject credential-bearing URLs and redact sensitive URL parameters in diagnostics. The app's own authenticated routes remain HTTPS.
+- Validate every initial URL, discovered URL and redirect, including resolved IPv4/IPv6 addresses. Reject loopback, private, link-local, cloud-metadata and other non-public destinations, unsupported schemes and disallowed ports. Enforce checks at connection time as well as DNS resolution to prevent rebinding; redirects must not escape the selected collection scope. Default to ports 80/443, with narrowly configured exceptions only if needed.
+- Record requested/final URL, redirect history, acquisition time, detected type, transport scheme and original asset hash. An HTTP-fetched hash establishes the saved snapshot's identity, not the authenticity of the remote publisher. Keep the transport indicator visible in source details.
+- Render HTML only through sanitized inert previews: no scripts, active frames, forms, event handlers or automatic remote-resource loading. Treat source text as evidence, never as instructions to the model or application. Preserve raw bytes privately for provenance; do not serve them as executable same-origin HTML.
+
+### 40.4 Extraction and normalization by format
+
+| Format | Extraction contract | Failure / review behavior |
+|---|---|---|
+| HTML | Decode charset, preserve original bytes, extract substantive headings/paragraphs/lists/tables and stable anchors; remove repeated navigation while retaining section context. Preserve notation and relevant style evidence before normalization. | Flag uncertain content boundaries, unsupported encodings, empty pages and lost table/rubric structure. A specific adapter may be required; generic text extraction cannot certify repertory grades. |
+| TXT | Support UTF-8 and BOM-signaled Unicode; detect other encodings cautiously and allow an encoding override with preview. Preserve paragraphs, line boundaries and original offsets/mapping; optional heading detection must be reviewable. | Do not silently replace undecodable characters or invent headings/pages. Use paragraph/line references if no original section labels exist. Reject binary files masquerading as text. |
+| XML | Detect schema/root/namespace and dispatch to a supported parser. Start with article JATS and the existing ALTO use case, preserving sections, tables, references and identifiers as appropriate. | Disable external entity resolution, DTD/network retrieval and unbounded entity expansion; enforce depth/node/text limits. For unknown schemas, show Unsupported XML structure and a sample; require a reviewed mapping/adapter before publication instead of concatenating all tags blindly. |
+
+All adapters emit a shared document structure: source/edition, immutable asset, processing revision, ordered sections/blocks, exact normalized text, original locators and warnings. Preserve transformations and mappings so normalized passage offsets can be resolved back to the saved original. Review edits create a new revision and invalidate affected approvals/index candidates rather than altering previously cited text.
+
+For the section 17 Kent example (`http://www.homeoint.org/books/kentrep/index.htm` or its working HTTPS equivalent), validate actual page layout, index relationships, rubric nesting and typography before defining the adapter. Produce both searchable passages and source-backed rubric/remedy/grade records where validated. Retain original notation and leave unknown grades unresolved. Availability, reuse basis and extraction correctness remain unverified until exercised; the catalogue URL is not evidence of a working connector.
+
+### 40.5 Backend, storage and RAG integration
+
+- Extend existing source/job services with preview/discovery, persisted scope selection, import start, progress, item retry/cancellation and extraction review operations. Authorization applies to every operation and asset read. Preview/discovery must use the same safe fetch limits as imports; long discovery runs are durable jobs too.
+- Reuse PostgreSQL durable jobs and worker leases. Persist item-level URL, status, attempts, failure reason, byte/hash information and discovery relationships so restarts resume work and retries do not duplicate sources or paid embedding calls. Cancellation stops new work and records completed/in-flight outcomes consistently.
+- Generalize asset type and document location across API/storage/reader contracts. Preserve PDF page mappings for PDFs; HTML/TXT/XML use section/block/paragraph/rubric locators and exact offsets. Do not fabricate PDF files, page counts or page numbers to fit existing page-only assumptions. Justify any new storage under section 33.4 and migrate without invalidating existing PDF citations.
+- Chunk by meaningful sections, with heading/rubric context and table row/column context retained. Store canonical exact passage text and offsets separately from any contextual embedding text, so added headings do not become invented quotations. Preserve negation, remedy grades and comparisons.
+- Apply existing text QA, rights, publication, access and compatible-index gates before retrieval. Reuse embedding and lexical retrieval after adapting page-specific assumptions. A parsed file is not automatically published; a published collection is not automatically indexed or complete.
+- Resolve every citation through its source, asset, revision and exact passage; validate text/offsets against that revision. Reader links must work even if the live website changes or disappears. Keep earlier saved answers attached to their original revisions and maintain current access restrictions.
+- Optional refresh is an explicit reimport in the initial release, using content hashes and conditional requests where supported. New content creates a reviewable revision/candidate index; it does not silently replace a published source or invalidate historical citations. Scheduled broad crawling remains separate scope.
+
+### 40.6 Delivery tasks and acceptance
+
+Deliver a complete usable slice for each format, including UI, worker, review, indexing and citation navigation. HTML single-page support precedes bounded multi-page collection; TXT can reuse the shared document structure; XML support is declared per schema. Complete these representative checks before expanding the catalogue, without delaying section 39's existing first-PDF verification.
+
+| Task | Deliverable | Acceptance evidence |
+|---|---|---|
+| ING-01 | Shared non-PDF document/locator model and safe HTTP/HTTPS fetcher | Existing PDF citations still resolve; public HTTP works; TLS failures and downgrade decisions are visible; private-network/redirect/rebinding attempts fail safely. |
+| ING-02 | Functional file/URL intake for HTML and TXT | An authorized admin previews, imports, reviews, publishes and indexes one of each; wrong formats/encodings and unauthorized requests have clear outcomes. |
+| ING-03 | Linked HTML collection and coverage UI | A bounded multi-page fixture with relative links, pagination, duplicate URLs, off-scope links and one failed chapter produces correct scope/counts; retries resume; partial coverage cannot masquerade as complete. |
+| ING-04 | Schema-aware XML intake | A JATS article retains sections/tables/identifiers and produces resolving citations; ALTO behavior remains valid; malformed, unknown and entity-expansion/external-entity fixtures fail safely without external requests. |
+| ING-05 | Non-PDF reader and shared RAG | Quick and Deep use the selected published HTML/TXT/XML sources; exact section citations reopen from saved answers without regeneration; unsupported questions produce insufficient evidence. |
+| ING-06 | Structure and recovery validation | Reviewed Kent-like rubric/grade fixtures preserve known values and flag unknown ones; cancellation, restart, retries, limits and changed-source revisions preserve assets, coverage and historical citations. |
+
+Minimum completion evidence: focused automated fixtures for format/transport/coverage boundaries, the frontend build, relevant backend checks, and concise end-to-end UI verification with one permitted HTML collection, one TXT document and one supported XML document. At least one acquisition must exercise HTTP-only delivery. Fixtures demonstrate mechanisms; record live source checks separately and do not claim live-site support from fixtures alone. Include discovered/selected/failed/excluded counts, extraction samples, source/revision identities and saved citation examples. Confirm that unselected or failed pages never appear as retrieved evidence and that collection-wide completeness questions acknowledge known omissions.
+
+No universal “all relevant data” guarantee: completion is measured against the selected work/scope and reviewed extraction contract. Missing pages, unsupported structures, uncertain grades and unverified rights must have visible outcomes rather than being silently discarded.

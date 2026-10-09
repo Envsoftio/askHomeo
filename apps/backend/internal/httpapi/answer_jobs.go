@@ -393,6 +393,7 @@ func (a *API) runOneAnswerJob(ctx context.Context) error {
 	}()
 	input, _ := json.Marshal(map[string]any{"question": question, "mode": mode, "source_ids": sourceIDs})
 	requestCtx := context.WithValue(jobCtx, answerJobKey{}, id)
+	requestCtx = localllm.WithOwner(requestCtx, "answer_job", id.String())
 	requestCtx = context.WithValue(requestCtx, roleKey{}, ownerRole)
 	requestCtx = context.WithValue(requestCtx, principalKey{}, Principal{ID: ownerPrincipalID, Role: ownerRole})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/research/questions", bytes.NewReader(input)).WithContext(requestCtx)
@@ -423,6 +424,11 @@ func (a *API) runOneAnswerJob(ctx context.Context) error {
 	if rec.Code == 503 {
 		code = "model_unavailable"
 		message = "The configured AI connection or model is unavailable. Check the model provider and try again."
+		if strings.Contains(response.Error, "HTTP 401") || strings.Contains(response.Error, "HTTP 403") || strings.Contains(response.Error, "HTTP 400") || strings.Contains(response.Error, "HTTP 404") {
+			code = "model_configuration"
+			message = "The model provider rejected the configured credentials, model, or request. Check the server configuration."
+			retry = false
+		}
 		if strings.Contains(response.Error, `finish_reason="length"`) {
 			code = "model_output_limit"
 			message = "The model ran out of output tokens before completing its answer. Reduce reasoning effort or increase CHAT_MAX_TOKENS."

@@ -36,7 +36,7 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-Local administrator}
       REVIEWER_NAME: ${REVIEWER_NAME:-Local reviewer}
       AUTH_PRINCIPALS_JSON: ${AUTH_PRINCIPALS_JSON:-}
-      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
@@ -72,7 +72,7 @@ services:
     command: ["/app/server", "-mode", "worker"]
     environment:
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
-      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
+      AI_PROVIDER: ${AI_PROVIDER:-deepinfra}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
