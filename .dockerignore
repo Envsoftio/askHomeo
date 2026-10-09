@@ -5,4 +5,7 @@ data/starter-corpus
 .git
 .env
 production.env
+.env.*
+*.env
+.github
 *.log

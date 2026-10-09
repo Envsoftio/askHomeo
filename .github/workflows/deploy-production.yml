@@ -1,0 +1,118 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    name: Test backend and build frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/backend/go.mod
+          cache-dependency-path: apps/backend/go.sum
+      - name: Backend tests
+        working-directory: apps/backend
+        run: go test ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+      - name: Frontend build
+        working-directory: apps/frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Validate production Compose
+        run: docker compose -f docker-compose.prod.yml --env-file .env.prod.example config --quiet
+
+  deploy:
+    name: Rsync and rebuild on server
+    needs: checks
+    # Manual deployments must also use main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || vars.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      SSHPASS: ${{ secrets.DEPLOY_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { echo 'Set DEPLOY_HOST to a hostname or IPv4 address'; exit 1; }
+          [[ "$DEPLOY_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]] || { echo 'Set DEPLOY_USER'; exit 1; }
+          [[ "$DEPLOY_PORT" =~ ^[0-9]+$ ]] && (( 10#$DEPLOY_PORT >= 1 && 10#$DEPLOY_PORT <= 65535 )) || { echo 'Invalid DEPLOY_PORT'; exit 1; }
+          # Use a dedicated app directory, never a home directory or filesystem root.
+          [[ "$DEPLOY_PATH" =~ ^/(home/[a-zA-Z0-9_-]+|srv|opt)/[a-zA-Z0-9_-]+(/[a-zA-Z0-9_-]+)*$ ]] || { echo 'Set DEPLOY_PATH to a dedicated absolute app path under /home/USER, /srv, or /opt'; exit 1; }
+          [[ -n "$SSHPASS" ]] || { echo 'Set DEPLOY_PASSWORD'; exit 1; }
+
+      - name: Install deployment tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass rsync
+
+      - name: Sync and deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          phase='Server preflight'
+          trap 'status=$?; echo "::error::${phase} failed (exit ${status}). See the preceding output for details."; exit "$status"' ERR
+          ssh_options=(-p "$DEPLOY_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o GlobalKnownHostsFile=/dev/null -o LogLevel=ERROR -o PreferredAuthentications=password,keyboard-interactive -o PubkeyAuthentication=no -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          echo 'Checking server deployment directory and .env.prod...'
+          sshpass -e ssh "${ssh_options[@]}" "$remote" "bash -s -- '$DEPLOY_PATH'" <<'REMOTE'
+          set -euo pipefail
+          remote_dir="$1"
+          if ! mkdir -p "$remote_dir"; then
+            echo 'ERROR: Cannot create DEPLOY_PATH. Give DEPLOY_USER write access to the deployment directory.' >&2
+            exit 1
+          fi
+          if [[ ! -f "$remote_dir/.env.prod" ]]; then
+            echo 'ERROR: .env.prod is missing in DEPLOY_PATH on the server.' >&2
+            echo 'Copy .env.prod.example to .env.prod in that directory, configure real credentials, and rerun the workflow.' >&2
+            exit 1
+          fi
+          if [[ ! -r "$remote_dir/.env.prod" ]]; then
+            echo 'ERROR: DEPLOY_USER cannot read .env.prod. Correct the file ownership and permissions.' >&2
+            exit 1
+          fi
+          echo 'Server preflight passed.'
+          REMOTE
+          phase='Code sync'
+          echo 'Syncing application code...'
+          printf -v rsync_ssh '%s ' ssh "${ssh_options[@]}"
+          sshpass -e rsync -az --delete -e "$rsync_ssh" \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '.env*' \
+            --exclude '*.env' \
+            --exclude 'data/' \
+            --exclude 'node_modules/' \
+            --exclude 'dist/' \
+            --exclude '.DS_Store' \
+            ./ "$remote:$DEPLOY_PATH/"
+          phase='Container deployment'
+          echo 'Building and deploying production containers...'
+          sshpass -e ssh "${ssh_options[@]}" "$remote" "cd '$DEPLOY_PATH' && bash scripts/deploy-prod.sh"
