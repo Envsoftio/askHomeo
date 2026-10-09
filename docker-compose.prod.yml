@@ -41,12 +41,12 @@ x-backend: &backend
     CHAT_MAX_TOKENS: ${CHAT_MAX_TOKENS:-}
     CHAT_REASONING_EFFORT: ${CHAT_REASONING_EFFORT:-}
     MODEL_REQUEST_TIMEOUT_SECONDS: ${MODEL_REQUEST_TIMEOUT_SECONDS:-}
-    # Explicit settings prevent LM Studio from inheriting hosted model metadata.
+    # Models and dimensions are required; the backend derives an unpinned revision when omitted.
     EMBEDDING_MODEL: ${EMBEDDING_MODEL:?Set EMBEDDING_MODEL for your AI_PROVIDER in .env.prod}
-    EMBEDDING_REVISION: ${EMBEDDING_REVISION:?Set EMBEDDING_REVISION for your AI_PROVIDER in .env.prod}
+    EMBEDDING_REVISION: ${EMBEDDING_REVISION:-}
     EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:?Set EMBEDDING_DIMENSIONS for your AI_PROVIDER in .env.prod}
     CHAT_MODEL: ${CHAT_MODEL:?Set CHAT_MODEL for your AI_PROVIDER in .env.prod}
-    CHAT_REVISION: ${CHAT_REVISION:?Set CHAT_REVISION for your AI_PROVIDER in .env.prod}
+    CHAT_REVISION: ${CHAT_REVISION:-}
 
 services:
   db:
