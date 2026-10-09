@@ -1,6 +1,6 @@
 # ING-01 — Safe public source fetching and document locations
 
-**Status:** Next core implementation task; not yet implemented.
+**Status:** Implemented. Fixture checks, Go suite and frontend build passed on 2026-10-10. No live URL check was run.
 
 **User outcome:** An administrator can preview a public HTTP or HTTPS source link safely and understand its actual format, final address, transport and extraction readiness before starting import. The resulting original location can be represented without pretending it is a PDF page.
 
@@ -21,3 +21,10 @@
 - Focused fetch/redirect fixtures, affected Go checks and the frontend build pass. Record any live URL checks separately from fixture results and do not claim that preview alone completes HTML/TXT/XML ingestion.
 
 **Following slice:** ING-02 delivers upload and URL intake for HTML/TXT through extraction review, publication, compatible indexing, Quick/Deep retrieval and reopening exact original citations. Backups/restore and operational alerts in PROD-01 remain deferred while this research core work proceeds.
+
+## Implementation notes
+
+- `POST /api/v1/sources/preview-url` is administrator-only and read-only. It accepts `{ "url": "...", "allow_https_to_http_redirect": false }`. A preview reads at most 10 MiB of decompressed content and reports the requested/final URL, transport, detected format, byte count, sample and readiness. A larger document reports the preview limit; direct PDF import retains its 250 MiB limit.
+- Preview and direct PDF URL import use `internal/safefetch`. Explicit HTTP remains HTTP, TLS failures do not retry over HTTP, and an HTTPS-to-HTTP redirect requires the preview request's explicit allowance. Direct PDF imports never allow that downgrade. DOI metadata and archive connector policies are unchanged; DOI PDF downloads retain HTTPS-only eligibility while using the same fetcher.
+- Migration 037 adds revision-scoped `document_locations` for a PDF page, section or text span. Existing PDF page IDs and citation response fields remain intact. `sources` and `pages` contain required PDF-only paths, hashes and page indices, so non-PDF locations live in the separate table with no invented page number. Future ING-02 intake will populate non-PDF assets and locations. Raw HTML has no serving route.
+- Fixtures cover blocked URLs, redirect escape, mixed public/private DNS answers, TLS failure, byte limits and explicit downgrade policy. All migrations applied to a disposable PostgreSQL database; a non-PDF text span with no PDF page and a saved PDF citation resolving to page index 0 were checked there. The disposable database was removed. No live URL result or HTML/TXT/XML ingestion is claimed.

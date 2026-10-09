@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"homeopath-poc/backend/internal/doi"
+	"homeopath-poc/backend/internal/safefetch"
 )
 
 // importPDFURL downloads a public HTTPS PDF and queues the existing page workflow.
@@ -32,13 +32,17 @@ func (a *API) importPDFURL(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "PDF link is required")
 		return
 	}
-	file, err := doi.FetchPDF(r.Context(), b.PDFURL)
+	fetcher := a.Fetcher
+	if fetcher == nil {
+		fetcher = &safefetch.Fetcher{}
+	}
+	result, err := fetcher.Fetch(r.Context(), b.PDFURL, safefetch.PDFLimit, false)
 	if err != nil {
 		fail(w, 502, "PDF could not be downloaded: "+err.Error())
 		return
 	}
-	defer file.Close()
-	id, err := a.Store.ImportPDFWithOrigin(r.Context(), file, b.Title, b.Author, b.Edition, b.PublicationInfo, b.Repository, b.SourceURL, b.RightsStatement, b.PDFURL)
+	defer result.Body.Close()
+	id, err := a.Store.ImportPDFWithOrigin(r.Context(), result.Body, b.Title, b.Author, b.Edition, b.PublicationInfo, b.Repository, b.SourceURL, b.RightsStatement, result.FinalURL)
 	if err != nil {
 		fail(w, 400, "Downloaded file could not be imported: "+err.Error())
 		return

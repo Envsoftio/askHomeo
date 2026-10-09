@@ -22,6 +22,7 @@ import (
 	"homeopath-poc/backend/internal/core"
 	"homeopath-poc/backend/internal/doi"
 	"homeopath-poc/backend/internal/localllm"
+	"homeopath-poc/backend/internal/safefetch"
 )
 
 type API struct {
@@ -32,6 +33,7 @@ type API struct {
 	Model             *localllm.Client
 	DOI               *doi.Client
 	Archive           *archive.Client
+	Fetcher           *safefetch.Fetcher
 	adminUsername     string
 	adminPassword     string
 	adminSessionToken string
@@ -52,6 +54,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/imports/farrington", a.importFarrington)
 	mux.HandleFunc("POST /api/v1/sources/upload", a.uploadPDF)
 	mux.HandleFunc("POST /api/v1/sources/import-url", a.importPDFURL)
+	mux.HandleFunc("POST /api/v1/sources/preview-url", a.previewURL)
 	mux.HandleFunc("POST /api/v1/sources/{id}/reprocess", a.reprocess)
 	mux.HandleFunc("POST /api/v1/sources/{id}/disable", a.disableSource)
 	mux.HandleFunc("POST /api/v1/sources/{id}/enable", a.enableSource)

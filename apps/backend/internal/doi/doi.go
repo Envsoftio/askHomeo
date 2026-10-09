@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/netip"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
+
+	"homeopath-poc/backend/internal/safefetch"
 )
 
 type Record struct {
@@ -290,87 +290,14 @@ func validPublicPDFURL(raw string) error {
 	return nil
 }
 
-// FetchPDF checks each redirect and every resolved destination before connecting.
+// FetchPDF keeps DOI PDF acquisition HTTPS-only while sharing the public-destination checks.
 func FetchPDF(ctx context.Context, raw string) (io.ReadCloser, error) {
 	if err := validPublicPDFURL(raw); err != nil {
 		return nil, err
 	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-		host, port, err := net.SplitHostPort(address)
-		if err != nil || port != "443" {
-			return nil, errors.New("unexpected PDF destination")
-		}
-		ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-		if err != nil {
-			return nil, err
-		}
-		var last error
-		for _, ip := range ips {
-			if allowedIP(ip.IP) {
-				conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
-				if err == nil {
-					return conn, nil
-				}
-				last = err
-			}
-		}
-		if last != nil {
-			return nil, last
-		}
-		return nil, errors.New("PDF host resolves to a private address")
-	}}
-	client := &http.Client{Transport: transport, Timeout: 210 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 4 {
-			return errors.New("too many PDF redirects")
-		}
-		return validPublicPDFURL(req.URL.String())
-	}}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	result, err := (&safefetch.Fetcher{}).Fetch(ctx, raw, safefetch.PDFLimit, false)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "HomeopathPOC/0.1")
-	req.Header.Set("Accept", "application/pdf")
-	res, err := client.Do(req)
-	if err != nil {
-		transport.CloseIdleConnections()
-		return nil, err
-	}
-	if res.StatusCode != 200 {
-		res.Body.Close()
-		transport.CloseIdleConnections()
-		return nil, fmt.Errorf("PDF download returned HTTP %d", res.StatusCode)
-	}
-	if res.ContentLength > 250<<20 {
-		res.Body.Close()
-		transport.CloseIdleConnections()
-		return nil, errors.New("PDF exceeds 250 MB")
-	}
-	return &limitedBody{ReadCloser: io.NopCloser(io.LimitReader(res.Body, (250<<20)+1)), original: res.Body, transport: transport}, nil
+	return result.Body, nil
 }
-
-func allowedIP(ip net.IP) bool {
-	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-		return false
-	}
-	addr, ok := netip.AddrFromSlice(ip)
-	if !ok {
-		return false
-	}
-	addr = addr.Unmap()
-	for _, raw := range []string{"100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "2001:db8::/32", "fc00::/7", "fe80::/10"} {
-		if netip.MustParsePrefix(raw).Contains(addr) {
-			return false
-		}
-	}
-	return true
-}
-
-type limitedBody struct {
-	io.ReadCloser
-	original  io.ReadCloser
-	transport *http.Transport
-}
-
-func (b *limitedBody) Close() error { b.transport.CloseIdleConnections(); return b.original.Close() }
