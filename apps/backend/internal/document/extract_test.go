@@ -79,3 +79,48 @@ func TestRejectBinaryAndScriptShell(t *testing.T) {
 		t.Fatal("accepted empty JavaScript shell")
 	}
 }
+
+func TestLegacyHTMLAutomaticEncodingPreservesOriginalOffsets(t *testing.T) {
+	raw := []byte("<html><body><p>M\xe9di-T: \x9cdema</p></body></html>")
+	out, err := Extract(raw, "text/html", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Charset != "windows-1252" || out.Blocks[0].Text != "Médi-T: œdema" {
+		t.Fatalf("unexpected decoding: %+v", out)
+	}
+	b := out.Blocks[0]
+	if string(raw[b.StartByte:b.EndByte]) != "<p>M\xe9di-T: \x9cdema</p>" {
+		t.Fatalf("wrong original offsets: %+v", b)
+	}
+	if !strings.Contains(strings.Join(out.Warnings, " "), "Windows-1252") {
+		t.Fatal("missing encoding review warning")
+	}
+	for _, ct := range []string{"text/html; charset=utf-8", "text/plain"} {
+		if _, err := Extract(raw, ct, "utf-8"); err == nil {
+			t.Fatal("overrode explicit encoding")
+		}
+	}
+	if _, err := Extract([]byte("<html><meta charset=utf-8><p>\xe9</p></html>"), "text/html", ""); err == nil {
+		t.Fatal("overrode meta declaration")
+	}
+	if _, err := Extract([]byte("<html><p>\x81</p></html>"), "text/html", ""); err == nil {
+		t.Fatal("accepted undefined legacy byte")
+	}
+}
+
+func TestImplicitParagraphEndHasOriginalLocation(t *testing.T) {
+	raw := []byte(`<html><body><p>First paragraph<p>Second paragraph</p></body></html>`)
+	out, err := Extract(raw, "text/html", "")
+	if err != nil || len(out.Blocks) != 2 {
+		t.Fatalf("extraction: %+v %v", out, err)
+	}
+	for i, b := range out.Blocks {
+		if b.EndByte <= b.StartByte || b.EndByte > len(raw) {
+			t.Fatalf("invalid offsets: %+v", b)
+		}
+		if i == 0 && string(raw[b.StartByte:b.EndByte]) != "<p>First paragraph" {
+			t.Fatalf("wrong implicit boundary: %+v", b)
+		}
+	}
+}

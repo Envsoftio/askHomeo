@@ -36,3 +36,8 @@
 - Focused extraction, locator, import/job-recovery, retrieval and citation fixtures pass; the relevant Go suite and frontend build pass. Exercise the complete UI journey with small permitted HTML and TXT documents and record source/asset/revision IDs plus citation examples. Record live URL checks separately from fixtures; do not claim general website collection from a one-page check.
 
 **Following slice:** [ING-06](ING-06.md) delivers structured repertory and materia medica research under roadmap section 42. Then ING-03 adds bounded linked HTML collection and coverage/recovery controls. ING-04 adds schema-aware XML. ING-05 extends non-PDF reader/RAG contracts and acceptance across XML and multi-document sources. PROD-01 recovery and operational alerts remain deferred while this research core work proceeds.
+
+
+## Shared prerequisite clarification — 2026-10-10
+
+Preserve decoded-text/original-byte mappings, legacy named anchors and inline style evidence needed by [ING-06 B/E](ING-06.md#b-legacy-html-repertory-adapter-and-notation-model); generic flattened text cannot certify repertory notation. Region-level filtering must retain substantive index notes and short entries. Single-document publication remains possible with explicit unsupported-structure limitations. Durable collection, case/rubric semantic adapters and the non-PDF structured evaluation extension belong to ING-06 A–F, not an unbounded expansion of this task. Do not report single-document browser/model acceptance complete on the basis of the external Homeoint inspection.

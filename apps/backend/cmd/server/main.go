@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"homeopath-poc/backend/internal/collection"
 	"homeopath-poc/backend/internal/core"
 	"homeopath-poc/backend/internal/httpapi"
 	"homeopath-poc/backend/internal/ingest"
@@ -88,6 +89,12 @@ func main() {
 		go func() {
 			if answerErr := httpapi.RunAnswerWorker(workerCtx, store, model); answerErr != nil && !errors.Is(answerErr, context.Canceled) {
 				log.Printf("answer worker stopped: %v", answerErr)
+				cancelWorker()
+			}
+		}()
+		go func() {
+			if captureErr := (&collection.CaptureWorker{Store: store}).Run(workerCtx); captureErr != nil && !errors.Is(captureErr, context.Canceled) {
+				log.Printf("collection capture worker stopped: %v", captureErr)
 				cancelWorker()
 			}
 		}()

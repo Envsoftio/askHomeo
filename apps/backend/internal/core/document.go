@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"homeopath-poc/backend/internal/document"
 )
 
@@ -25,6 +26,9 @@ type DocumentImport struct {
 	EvidenceCategory                                                                string
 	LiteratureCategoryOrigin                                                        string
 	CategoryActorID                                                                 *uuid.UUID
+	// SourceID is reserved for idempotent collection-item imports. Ordinary
+	// single-document imports continue to receive a random source identity.
+	SourceID *uuid.UUID
 }
 
 // ImportDocument validates a single snapshot and queues extraction. The saved
@@ -131,6 +135,23 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 		}
 	}
 	id := uuid.New()
+	if info.SourceID != nil {
+		if *info.SourceID == uuid.Nil {
+			return uuid.Nil, errors.New("invalid fixed source identity")
+		}
+		id = *info.SourceID
+		var priorSHA string
+		lookupErr := s.DB.QueryRow(ctx, `SELECT document_sha256 FROM sources WHERE id=$1`, id).Scan(&priorSHA)
+		if lookupErr == nil {
+			if priorSHA != sha {
+				return uuid.Nil, errors.New("fixed source identity has different original bytes")
+			}
+			return id, nil
+		}
+		if !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return uuid.Nil, lookupErr
+		}
+	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return uuid.Nil, err

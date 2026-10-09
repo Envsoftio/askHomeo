@@ -3,9 +3,11 @@ package safefetch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -96,5 +98,18 @@ func TestHTTPSDowngradeRequiresExplicitAllowance(t *testing.T) {
 	}
 	if err := checkRedirect(next, []*http.Request{previous}, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestScopedFetchRejectsRedirectBeforeConnecting(t *testing.T) {
+	f := fixture("HTTP/1.1 302 Found\r\nLocation: http://public.example/outside/page\r\nContent-Length: 0\r\n\r\n")
+	allowed := func(u *url.URL) error {
+		if !strings.HasPrefix(u.Path, "/book/") {
+			return errors.New("outside collection scope")
+		}
+		return nil
+	}
+	if _, err := f.FetchScoped(context.Background(), "http://public.example/book/index", PreviewLimit, false, allowed); err == nil || !strings.Contains(err.Error(), "outside collection scope") {
+		t.Fatalf("redirect escape was accepted: %v", err)
 	}
 }

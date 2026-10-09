@@ -74,9 +74,21 @@ func allowedIP(ip net.IP) bool {
 }
 
 func (f *Fetcher) Fetch(ctx context.Context, raw string, limit int64, allowDowngrade bool) (*Result, error) {
+	return f.FetchScoped(ctx, raw, limit, allowDowngrade, nil)
+}
+
+// FetchScoped enforces an additional caller-defined URL policy before the
+// initial request and before every redirect. Collection path limits must be
+// checked here, before a redirect can contact an out-of-scope destination.
+func (f *Fetcher) FetchScoped(ctx context.Context, raw string, limit int64, allowDowngrade bool, allowed func(*url.URL) error) (*Result, error) {
 	initial, err := validate(raw)
 	if err != nil {
 		return nil, err
+	}
+	if allowed != nil {
+		if err := allowed(initial); err != nil {
+			return nil, err
+		}
 	}
 	if limit < 1 || limit > PDFLimit {
 		return nil, errors.New("invalid fetch limit")
@@ -136,7 +148,13 @@ func (f *Fetcher) Fetch(ctx context.Context, raw string, limit int64, allowDowng
 		req.Header.Del("Authorization")
 		req.Header.Del("Cookie")
 		req.Header.Del("Referer")
-		return checkRedirect(req, via, allowDowngrade)
+		if err := checkRedirect(req, via, allowDowngrade); err != nil {
+			return err
+		}
+		if allowed != nil {
+			return allowed(req.URL)
+		}
+		return nil
 	}}
 	req, err := http.NewRequestWithContext(timeoutCtx, http.MethodGet, initial.String(), nil)
 	if err != nil {

@@ -22,8 +22,9 @@ x-backend: &backend
   tmpfs:
     - /tmp:rw,noexec,nosuid,nodev,size=1g,mode=1777
   volumes:
-    # Legacy originals are mounted read-only for the one-time migration.
-    - assets:/app/data/runtime/assets:ro
+    # HTML/TXT originals and captured collection assets are written here by
+    # the API and worker; PDF originals continue to use private B2 storage.
+    - assets:/app/data/runtime/assets:rw
     - ./data/starter-corpus:/app/data/starter-corpus:ro
   environment: &backend-env
     PDF_STORAGE_PROVIDER: b2

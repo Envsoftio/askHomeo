@@ -90,6 +90,9 @@ func Extract(raw []byte, contentType, charsetOverride string) (Result, error) {
 		return Result{}, err
 	}
 	out.Format, out.Charset = format, charset
+	if format == "html" && charset == "windows-1252" && charsetOverride == "" {
+		out.Warnings = append(out.Warnings, "Decoded legacy HTML as Windows-1252; verify accented characters and notation during content review")
+	}
 	for i := range out.Blocks {
 		start, e1 := originalOffset(decoded, charset, out.Blocks[i].StartByte, raw)
 		end, e2 := originalOffset(decoded, charset, out.Blocks[i].EndByte, raw)
@@ -142,6 +145,12 @@ func decode(raw []byte, contentType, override string) (string, string, error) {
 	}
 	if label == "" {
 		label = "utf-8"
+		// Legacy HTML commonly omits its encoding. Use the browser-compatible
+		// Western fallback only for unlabeled HTML, never over an explicit
+		// declaration/BOM/override or for plain text. Extraction remains reviewed.
+		if format, err := Detect(raw, contentType); err == nil && format == "html" && !utf8.Valid(raw) {
+			label = "windows-1252"
+		}
 	}
 	var decoded string
 	switch label {
@@ -333,6 +342,12 @@ func extractHTML(decoded string) (Result, error) {
 			parentHidden := len(stack) > 0 && stack[len(stack)-1].hidden
 			hidden := parentHidden || isHiddenTag(tag, tok.Attr)
 			if !hidden && blockKind(tag) != "" {
+				// Legacy HTML often omits closing paragraph tags. Finish the
+				// previous span before starting another block, rather than saving
+				// an invalid zero end offset that prevents document import.
+				if current != nil {
+					current.EndByte = begin
+				}
 				flush()
 				key := fmt.Sprintf("block-%d", len(result.Blocks)+1)
 				for _, a := range tok.Attr {
