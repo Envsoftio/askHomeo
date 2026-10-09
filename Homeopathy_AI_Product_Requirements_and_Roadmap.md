@@ -37,6 +37,8 @@ Research decisions updated 2026-10-09: [GLM-first hosted inference, ingestion, r
 
 **Current delivery priority — confirmed 2026-10-09:** [Research core first](#36-research-core-first--confirmed-delivery-priority). Establish and validate ingestion, retrieval and trustworthy cited answers before expanding other product areas. Section 36 takes precedence over earlier delivery sequences; evaluation starts with the core, and broad source ingestion follows validation on a representative corpus.
 
+**Latest clarification — 2026-10-09:** [Assisted evaluation, research modes, source organization and isolated email delivery](#37-assisted-evaluation-research-modes-source-organization-and-isolated-email-delivery). Minimize manual evaluation work, retain user-selected Quick/Deep modes, start from the existing PRD book references, and isolate ZeptoMail delivery from application and research execution. Section 36's delivery priority remains unchanged.
+
 ## 2. Product understanding
 
 Build an AI-powered homeopathy knowledge, learning, and research platform that can eventually support practitioner case analysis. Users should be able to ask, learn, compare, research, or analyze a case with traceable sources.
@@ -1535,7 +1537,7 @@ Initial account requirements:
 - **Access rules:** the Go backend enforces ownership and user/reviewer/admin permissions on APIs, saved work, sources and assets. Student, teacher, practitioner and researcher are profile/audience choices, not self-granted reviewer or administrator permissions.
 - **Existing POC ownership:** the user confirms no real users have been created yet. Inspect any seeded principals and saved POC work before account setup; if retained records exist, explicitly map their ownership to the intended accounts. If none exist, no user-migration feature is needed. Do not silently reassign records or leave production access dependent on shared development tokens.
 
-Use library-supported password handling and provider validation. Apply bounded login/reset attempts, cookie/CSRF protections and token expiry as part of the relevant feature, rather than creating a separate large security project. ZeptoMail is the only selected email delivery provider; account/domain configuration and credentials remain to be supplied. No additional application service is required for email.
+Use library-supported password handling and provider validation. Apply bounded login/reset attempts, cookie/CSRF protections and token expiry as part of the relevant feature, rather than creating a separate large security project. ZeptoMail is the only selected email delivery provider; account/domain configuration and credentials remain to be supplied. Section 37.4 requires a separate email worker process using the same Go codebase and PostgreSQL; no additional email provider or queue service is required.
 
 ### 33.3 Handlebars email templates
 
@@ -1660,7 +1662,7 @@ Use ZeptoMail for verification, password recovery and answer-ready emails. Rende
 - Send only to the account's verified email. Track pending, accepted-by-provider and failed delivery states separately; API acceptance does not prove inbox delivery. Retain provider message identifiers and update delivery/bounce status when supported by configured provider events.
 - Use a unique notification key per run/type, bounded email retries and attempt records. Suppress known duplicate sends; ambiguous network outcomes need reconciliation where possible rather than a promise of exactly-once email delivery.
 - Show the answer immediately once saved, even if email is delayed or fails. Surface delivery failures to admins without changing the answer's completion state.
-- Configure the verified sender/domain, correct ZeptoMail account region/endpoint and server-side credentials during deployment. Do not add a second email provider or another application service.
+- Configure the verified sender/domain, correct ZeptoMail account region/endpoint and server-side credentials during deployment. Do not add a second email provider. Run delivery in the separate Go email worker described in section 37.4; this does not require a separate codebase or queue service.
 
 ### 34.4 Query history, RAG diagnostics and cost accounting
 
@@ -1880,7 +1882,7 @@ This qualifies section 32's day-one collection direction: source discovery, righ
 
 Defer new public website work, account lifecycle features, email notifications, advanced dashboards, patient-case analysis and other product-module expansion. Their requirements remain in the roadmap; they are not cancelled.
 
-Retain and improve only the supporting functionality necessary to operate and inspect the core: existing authorization, durable source/answer jobs, minimal source-review and citation screens, saved-answer access, per-call usage/cost records and a basic evaluation report. A broad UI redesign or analytics dashboard is not needed to measure the core. Existing source/access protections must continue to apply.
+Retain and improve the supporting functionality necessary to operate and inspect the core: existing authorization, durable source/answer jobs, functional source-ingestion/review and citation screens, saved-answer access, per-call usage/cost records and a basic evaluation report. The user's clarification in section 37.5 makes a presentable, usable source-ingestion workflow part of core delivery; retaining POC controls alone is insufficient. A broad redesign of unrelated screens or analytics dashboard remains deferred. Existing source/access protections must continue to apply.
 
 ### 36.4 Milestone completion and immediate next task
 
@@ -1889,3 +1891,77 @@ Completion requires a reviewed, versioned evaluation report showing retrieval qu
 Also demonstrate the full workflow in section 36.1, including original-page citation resolution and reopening a saved answer without regenerating it. Preserve earlier citation lineage through ingestion/index changes and confirm source restrictions remain enforced. Use focused existing checks and concise manual acceptance steps under section 33.6.
 
 **Immediate next implementation task:** restore the evaluation baseline and inspect representative ingestion failures, producing a concrete failure list that drives ingestion and retrieval changes. This documentation update records priority only; it does not execute that task, activate GLM, approve a spending budget or mark the milestone complete.
+
+## 37. Assisted evaluation, research modes, source organization and isolated email delivery
+
+Decision date: 2026-10-09. The user wants system assistance to minimize manual evaluation/approval effort; the product owner and a domain expert will still review. Users should select Quick or Deep research in the UI. Begin with book references already in this PRD. ZeptoMail delivery needs an isolated worker/pipeline so delivery problems do not break existing functionality. The source organization design below is a recommendation answering the user's question, not an implemented feature or a finalized taxonomy. These clarifications preserve section 36's research-core-first order; email implementation remains deferred until that milestone is validated.
+
+### 37.1 System-assisted evaluation with focused human review
+
+- Automate benchmark execution, citation/page/span integrity checks, source-scope checks, result comparison, and preparation of proposed relevant passages, expected points and claim-support judgments. Keep machine suggestions visibly separate from human-reviewed labels and deterministic results.
+- Prepare a compact review queue showing the question, answer, exact evidence and surrounding context, proposed judgment and reason for attention. Prioritize unsupported claims, disagreements, missing aspects, OCR uncertainty, numerical/negation errors and regressions. A model's self-reported confidence alone must not determine whether review is needed.
+- The product owner and domain expert review flagged cases plus a representative sample of apparent passes, including each question type and both modes. Sampling passing results helps catch errors missed by automatic checks. Choose the sample size and escalation criteria with the first baseline; if recurring errors appear, widen review for the affected category.
+- Reduce repetitive work through grouped review, editable suggested labels and reuse of approved evidence/expected points for unchanged source revisions and questions. New answers still require their own support assessment; changed source text, evidence, model/prompt or pipeline configuration requires affected checks to run again and review scope to be reassessed.
+- **Clarification: users' answers do not require manual review before delivery.** Every answer passes automated evidence/citation checks and can then be delivered as supported, partial or insufficient evidence. Failed checks must not publish unchecked claims. Human review is for benchmark evaluation, flagged quality problems and sampled audits; it is not an approval step in the user's question-to-answer flow. Source review before publishing a document into the shared library is a separate ingestion workflow.
+- Preserve the inherited 30-case release contract while restoring the baseline: its scorer requires human decisions for displayed claims and expected points. Machine suggestions can speed review but cannot populate fields labelled human-reviewed without actual review. A smaller human-reviewed sample can support a clearly labelled sampled report; it cannot silently satisfy the existing full release gate. Any later change to that gate must be explicit and versioned.
+- Report human-reviewed, machine-estimated and unevaluated results separately, including sample sizes and failures. Track review time and recurring correction types so automation can reduce measured manual effort. This clarification does not remove source rights/content/publication gates or authorize automatic rights approval.
+
+### 37.2 User-selected Quick and Deep research
+
+**Observed in the current code:** `apps/frontend/src/App.vue` already exposes Quick answer and Detailed research. The API validates `quick`/`deep`, and jobs/answers persist the mode. The general deep path adds focused searches; these are existing capabilities, not newly implemented by this update.
+
+Existing controls establish POC behavior only, not acceptable presentation or UX. Preserve the functionality while improving the interface; do not use their existence to mark the product UI complete.
+
+| Mode | Intended user experience | Implementation requirement |
+|---|---|---|
+| Quick answer | Concise, focused answer with citations and visible gaps | Smaller bounded search/evidence/output budget; retain support and citation checks |
+| Deep research | Broader investigation of the requested aspects, comparisons and conflicting evidence; takes longer | Larger but bounded research budget, persistent progress and saved result; retain the selected source scope |
+
+Keep Quick as the existing default. Use plain UI descriptions of depth and expected waiting rather than fixed search counts. Persist the selection with each run; reopening a result does not rerun it, and deliberately requesting a deeper run creates a new linked run. Both modes use the same evidence-integrity requirements. Deep research is over eligible prepared sources until broader discovery is implemented; the label must not imply an exhaustive internet literature search.
+
+Measure latency and cost separately by mode and show approximate timing only after measurement. Choosing Deep is not authorization for unlimited time, retries or spend. Numerical operational limits and the paid experiment budget remain open; the user's mode decision does not supply them.
+
+### 37.3 Existing book references and manageable source organization
+
+**Confirmed starting pool:** use the book references in sections 16–17, including Nash, Farrington, Kent, Boericke and Allen as applicable. Select exact editions/assets from that pool for the initial baseline; verify availability and use permissions rather than assuming the references are already acquired. Preserve section 36.2's clean-book/difficult-scan coverage and complementary papers with tables and numerical findings.
+
+**Observed implementation:** source intake and review already store bibliographic metadata, edition/repository information, rights state and processing/publication state. The inspected source schema, API and Vue forms do not provide a general source category/tag system. DATA-01, WS-16 and section 32 describe planned classification/library behavior; they are not evidence of implemented controls. DOI work type and page classification are separate from source organization.
+
+Recommended minimal organization, extending the existing Sources workflow:
+
+| Field | Purpose / starting values |
+|---|---|
+| Source type | Book, journal article, guideline/reference, trial registration; keep access depth (metadata/abstract/full text) separate |
+| Content/evidence category | Reuse section 16.4: materia medica, repertory, published case, trial/study, systematic review, guideline/safety reference; distinguish historical narratives from modern reports and allow mixed/unknown content |
+| Module tags | One or more of the seven modules in section 32.2; one source can serve several modules without duplicating the file |
+| Topic tags | Optional controlled suggestions for remedy, symptom/topic and body system; administrators can correct suggestions and normalize spelling/duplicates |
+| Existing metadata and states | Preserve author, exact edition, language where available, rights, review, publication and index readiness as separate fields, not free-text tags |
+
+- Allow category/tag selection during PDF upload, URL import and imported-reference review, with system suggestions to reduce typing. Unknown classification can enter review; an inferred label never grants rights or publication eligibility. Source-level labels must not relabel every passage in a mixed-content work as the same evidence type.
+- Provide source-list search and filters by category, module/topic tags, author, and processing/rights state. Support authorized bulk classification changes with clear selected-item counts; ordinary users browse permitted sources and cannot edit shared-library metadata.
+- Reuse these filters in the Ask source picker, resolve the selection on the backend, and persist effective source IDs with the run. Classification never bypasses rights, access, publication or compatible READY-index checks. Keep filters and selected sources consistent across Quick and Deep paths.
+- Preserve classification through reprocessing and retain edition identity. Start with existing storage where suitable; justify any new tables under section 33.4. Folders, private user libraries and a complex taxonomy editor are not required for the first core milestone.
+
+### 37.4 Separate ZeptoMail worker and failure isolation
+
+**Confirmed:** ZeptoMail remains the sole delivery provider and Go-rendered Handlebars remains the template choice. Mail must have its own durable delivery pipeline. **Recommended implementation:** a separate `mail-worker` process/container from the existing Go codebase, backed by PostgreSQL email jobs/outbox records. Reuse infrastructure; a new broker or microservice codebase is unnecessary. The current server supports API and research/ingestion worker modes; no ZeptoMail worker implementation was found in this review.
+
+- Application transactions create durable email intents; the mail worker renders/sends them after commit. Save a completed answer and its pending completion notification atomically, without calling ZeptoMail in that transaction. Delivery failure never changes a completed answer to failed or causes research to run again.
+- Give mail its own process lifecycle, bounded concurrency, database connection budget, request timeouts and retries with backoff. An email failure or stopped mail worker must not cancel research/ingestion workers, block API startup or consume their execution slots. API/frontend/research health and deployment readiness must not depend on ZeptoMail connectivity or mail-worker health; report email degradation separately.
+- Isolate missing/invalid mail credentials to mail delivery. Keep queued work durable, expose configuration/delivery failures to admins, and avoid retry storms. After bounded retries, retain a failed delivery for inspection and controlled retry; new deliverable mail must not wait behind one permanently failing message.
+- Retain unique notification keys, provider request/message IDs and delivery states under section 34.3. Restart/retry must not duplicate account actions or research runs. Ambiguous provider outcomes require reconciliation where possible; do not promise exactly-once email delivery.
+- Verification and password-reset flows inherently depend on the user receiving a valid link. During an outage, keep verification pending and provide safe resend/recovery states; never bypass email verification, issue access on a failed send, or report provider acceptance as inbox delivery. Expired/superseded account links must not be sent as usable recovery links after a backlog clears.
+- Acceptance: simulate ZeptoMail timeout/rejection, invalid mail configuration and a stopped/restarted mail worker. Existing sign-in, source intake, research completion and saved-answer access must continue; pending/failed deliveries must remain visible and recoverable. Confirm retrying mail does not repeat the business action, account links retain expiry/single-use protections, and duplicate completion events do not create duplicate notification records.
+
+Sections 37.1–37.4 record requirements, not implemented category/tag controls, an email worker, model calls or automatic approval behavior. Section 37.5 records the subsequent source UI implementation. The next research-quality task remains restoring the evaluation baseline, with assisted review preparation to minimize manual effort.
+
+### 37.5 Functional source-ingestion UI, beyond the POC
+
+**Confirmed clarification — 2026-10-09:** the POC interface is not presentable enough. A functional, clearer source-ingestion screen is required as part of operating the research core. This qualifies the earlier minimal-screen scope, while preserving existing source APIs, permissions, processing and publication behavior.
+
+- Make the source library the main screen, with title/author search, status filters, clear processing state and the next action for each source. Distinguish processing, review needed, ready for questions and unavailable material. Never label an incompatible index ready for current questions.
+- Use a deliberate Add source flow with one intake method visible at a time: upload PDF, direct PDF URL, catalogue search or DOI lookup. Keep optional source details secondary, validate file type/size, retain inputs after errors, and show an accepted-source confirmation with a link to progress. Clear a successful import's metadata before the next file so editions and rights statements do not leak between submissions.
+- Keep source review reachable from the library, with a return path, progress steps, automatic-check results, uncertain pages, source details, rights decisions and publication blockers. Explain that background work continues after acceptance. Treat metadata-only DOI references separately from searchable full text.
+- Support keyboard use and small screens. Use understandable loading, empty, success and failure states. Preserve working Quick/Deep behavior; broader Ask presentation can be improved in its own feature slice.
+
+**Implementation checkpoint:** the source library component, focused intake panel, file selection/drop validation, progressive metadata fields, progress navigation and source-review presentation were implemented in the frontend during this clarification. Existing backend routes are reused. Category/tag persistence, the ZeptoMail worker and migration to the selected shadcn-vue component stack remain separate implementation work; this UI change does not mark them complete. Source listing currently uses the existing endpoint's latest-50-source limit; library-wide server search/pagination remains a follow-up as the corpus grows. Frontend build and focused UI verification are reported separately from live ingestion acceptance.
