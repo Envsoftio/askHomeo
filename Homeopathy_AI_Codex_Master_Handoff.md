@@ -11,6 +11,8 @@
 
 **Review update — 2026-10-05:** Go replaces the previous Python API/worker choice at the user's request. shadcn-vue and the supporting Go libraries are recommendations pending discussion. The [POC PRD](Homeopathy_AI_Source_Ingestion_POC_PRD.md) is authoritative for implementation details; its section 56 defines revision, publication, and verification requirements. This handoff preserves product context and future direction.
 
+**Next-task update — 2026-10-10:** Read [product roadmap section 42](Homeopathy_AI_Product_Requirements_and_Roadmap.md#42-literature-categories-and-category-aware-research--2026-10-10) and POC PRD section 64 before implementation. [ING-02](tasks/ING-02.md) now includes automatic content-based literature classification with uncertainty and admin manual/override fallback, source/category filters and persisted evidence labels for PDF/HTML/TXT. [ING-06](tasks/ING-06.md) follows immediately with reviewed materia medica entries, repertory rubrics/remedies/grades and category-aware RAG (chunking, hybrid/structured retrieval, reranking and claim verification) in Quick/Deep research, with baseline comparison acceptance. Broader ING-03/04/05 collection follows. Other literature categories remain searchable with distinct evidence attribution; generic text extraction does not certify repertory grades. These are planned capabilities, not implementation claims. Full patient repertorization remains deferred.
+
 ---
 
 # 1. How to use this file

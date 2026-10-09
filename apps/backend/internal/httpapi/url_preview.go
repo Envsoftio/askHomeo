@@ -9,10 +9,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"homeopath-poc/backend/internal/document"
 	"homeopath-poc/backend/internal/safefetch"
 )
 
-var htmlHidden = regexp.MustCompile(`(?is)<(?:script|style|noscript|svg|template)\b[^>]*>.*?</(?:script|style|noscript|svg|template)\s*>`)
 var htmlTags = regexp.MustCompile(`(?s)<[^>]*>`)
 var whitespace = regexp.MustCompile(`\s+`)
 
@@ -23,6 +23,7 @@ func (a *API) previewURL(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		URL               string `json:"url"`
 		AllowHTTPRedirect bool   `json:"allow_https_to_http_redirect"`
+		CharsetOverride   string `json:"charset_override"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input) != nil {
 		fail(w, 400, "enter a source URL")
@@ -47,8 +48,12 @@ func (a *API) previewURL(w http.ResponseWriter, r *http.Request) {
 	detected := "unsupported"
 	sample := ""
 	readiness := "unsupported type"
+	blockCount := 0
+	charset := ""
+	warnings := []string{}
 	mime := strings.ToLower(strings.TrimSpace(strings.Split(result.ContentType, ";")[0]))
 	trimmed := bytes.TrimSpace(data)
+	detectedDocument, _ := document.Detect(data, result.ContentType)
 	switch {
 	case len(trimmed) == 0:
 		readiness = "empty response"
@@ -58,15 +63,9 @@ func (a *API) previewURL(w http.ResponseWriter, r *http.Request) {
 		if result.Downgraded {
 			readiness = "HTTPS to HTTP redirect was previewed; direct PDF import blocks this downgrade"
 		}
-	case bytes.HasPrefix(bytes.ToLower(trimmed), []byte("<!doctype html")) || bytes.HasPrefix(bytes.ToLower(trimmed), []byte("<html")) || mime == "text/html":
+	case detectedDocument == "html":
 		detected = "html"
-		sample = shortText(htmlTags.ReplaceAllString(htmlHidden.ReplaceAllString(string(data), " "), " "))
-		readiness = "HTML structure and text need extraction review in ING-02"
-		if sample == "" {
-			readiness = "missing text"
-		} else if loginPage(sample) {
-			readiness = "login or error page"
-		}
+		readiness, sample, blockCount, charset, warnings = previewExtract(data, result.ContentType, input.CharsetOverride)
 	case bytes.HasPrefix(trimmed, []byte("<?xml")) || mime == "application/xml" || mime == "text/xml":
 		detected = "xml"
 		sample = shortText(htmlTags.ReplaceAllString(string(data), " "))
@@ -74,17 +73,32 @@ func (a *API) previewURL(w http.ResponseWriter, r *http.Request) {
 		if sample == "" {
 			readiness = "missing text"
 		}
-	case mime == "text/plain" || (utf8.Valid(data) && !bytes.ContainsRune(data, 0) && !bytes.Contains(trimmed, []byte("<"))):
+	case detectedDocument == "txt" || mime == "text/plain" || (utf8.Valid(data) && !bytes.ContainsRune(data, 0) && !bytes.Contains(trimmed, []byte("<"))):
 		detected = "txt"
-		sample = shortText(string(data))
-		readiness = "Text needs extraction review in ING-02"
-		if sample == "" {
-			readiness = "missing text"
-		} else if loginPage(sample) {
-			readiness = "login or error page"
+		readiness, sample, blockCount, charset, warnings = previewExtract(data, result.ContentType, input.CharsetOverride)
+	}
+	write(w, 200, map[string]any{"requested_url": result.RequestedURL, "final_url": result.FinalURL, "redirected": result.Redirected, "transport_changed": result.TransportChanged, "https_to_http_redirect_allowed": input.AllowHTTPRedirect && result.Downgraded, "unencrypted": result.Unencrypted, "detected_type": detected, "content_type": result.ContentType, "byte_size": len(data), "sample": sample, "readiness": readiness, "can_import_pdf": detected == "pdf" && !result.Downgraded, "block_count": blockCount, "charset": charset, "extraction_warnings": warnings})
+}
+
+func previewExtract(data []byte, contentType, override string) (readiness, sample string, count int, charset string, warnings []string) {
+	out, err := document.Extract(data, contentType, override)
+	if err != nil {
+		return err.Error(), "", 0, "", []string{}
+	}
+	for _, block := range out.Blocks {
+		if sample != "" {
+			sample += " "
+		}
+		sample += block.Text
+		if len(sample) > 400 {
+			break
 		}
 	}
-	write(w, 200, map[string]any{"requested_url": result.RequestedURL, "final_url": result.FinalURL, "redirected": result.Redirected, "transport_changed": result.TransportChanged, "https_to_http_redirect_allowed": input.AllowHTTPRedirect && result.Downgraded, "unencrypted": result.Unencrypted, "detected_type": detected, "content_type": result.ContentType, "byte_size": len(data), "sample": sample, "readiness": readiness, "can_import_pdf": detected == "pdf" && !result.Downgraded})
+	sample = shortText(sample)
+	if loginPage(sample) {
+		return "login or error page; review before import", sample, len(out.Blocks), out.Charset, out.Warnings
+	}
+	return "text extracted for preview; import and section review are still required", sample, len(out.Blocks), out.Charset, out.Warnings
 }
 func shortText(s string) string {
 	s = whitespace.ReplaceAllString(strings.TrimSpace(s), " ")

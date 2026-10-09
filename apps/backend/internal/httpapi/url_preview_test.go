@@ -28,3 +28,14 @@ func TestPreviewURLRequiresAdminAndDoesNotNeedStore(t *testing.T) {
 		t.Fatalf("credential URL: %d: %s", got.Code, got.Body.String())
 	}
 }
+
+func TestPreviewExtractReportsBlocksAndEncodingFailure(t *testing.T) {
+	readiness, sample, count, charset, warnings := previewExtract([]byte(`<html><body><nav>Skip</nav><h1>Chapter</h1><p>Useful passage.</p><script>bad()</script></body></html>`), "text/html", "")
+	if count != 2 || charset != "utf-8" || !strings.Contains(sample, "Useful passage") || strings.Contains(sample, "Skip") || len(warnings) == 0 || !strings.Contains(readiness, "review") {
+		t.Fatalf("preview: %q %q %d %q %v", readiness, sample, count, charset, warnings)
+	}
+	readiness, _, count, _, _ = previewExtract([]byte{'C', 'a', 'f', 0xe9}, "text/plain", "")
+	if count != 0 || !strings.Contains(readiness, "override") {
+		t.Fatalf("encoding failure: %q %d", readiness, count)
+	}
+}

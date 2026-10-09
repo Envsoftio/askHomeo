@@ -1,6 +1,6 @@
 # Homeopathy AI — Product Requirements and Development Direction
 
-Date: 2026-10-09
+Date: 2026-10-10
 
 Status: Consolidated product requirements, scope assessment, source catalogue, competitor review, public website requirements, and task-ready roadmap. India-first launch and all seven product modules are confirmed direction; sequencing, collection targets, pricing, and release dates remain proposals unless explicitly identified otherwise. No future feature is marked implemented by this document.
 
@@ -2034,7 +2034,7 @@ Attach the code changes, effective non-secret configuration, focused check resul
 
 Before deploying any schema change, back up the database and PDF assets together and describe migration compatibility. Retain the previous image and non-secret configuration for rollback, preserve prepared sources and citations, and keep any failed candidate index separate from the active compatible index. Reverting the chat provider alone must not delete or rebuild source data.
 
-**Current next implementation task:** [ING-01 — Safe public source fetching and document locations](tasks/ING-01.md), reflecting the later source-core priority in section 41. [PROD-01](tasks/PROD-01.md) is deferred after its initial session/readiness slice; CORE-02 remains a historical evaluation workstream.
+**Current next implementation task:** [ING-02 — Single-document HTML/TXT and literature classification](tasks/ING-02.md), reflecting the later source-core priority in section 41. [PROD-01](tasks/PROD-01.md) is deferred after its initial session/readiness slice; CORE-02 remains a historical evaluation workstream.
 
 
 ## 40. HTML, TXT and XML source intake, including HTTP-only sources
@@ -2120,11 +2120,11 @@ Deliver a complete usable slice for each format, including UI, worker, review, i
 | Task | Deliverable | Acceptance evidence |
 |---|---|---|
 | ING-01 | Shared non-PDF document/locator model and safe HTTP/HTTPS fetcher | Existing PDF citations still resolve; public HTTP works; TLS failures and downgrade decisions are visible; private-network/redirect/rebinding attempts fail safely. |
-| [ING-02](tasks/ING-02.md) | Single-document HTML/TXT from UI intake through RAG and saved citations | An authorized admin previews, imports, reviews, publishes and indexes one of each; Quick/Deep use both, saved section/span citations reopen, and wrong formats/encodings or unauthorized requests have clear outcomes. |
+| [ING-02](tasks/ING-02.md) | Single-document HTML/TXT from UI intake through RAG, literature classification/filtering and saved citations | An authorized admin previews, imports, reviews, publishes and indexes one of each; Quick/Deep use both, saved section/span citations reopen, and wrong formats/encodings or unauthorized requests have clear outcomes. |
 | ING-03 | Linked HTML collection and coverage UI | A bounded multi-page fixture with relative links, pagination, duplicate URLs, off-scope links and one failed chapter produces correct scope/counts; retries resume; partial coverage cannot masquerade as complete. |
 | ING-04 | Schema-aware XML intake | A JATS article retains sections/tables/identifiers and produces resolving citations; ALTO behavior remains valid; malformed, unknown and entity-expansion/external-entity fixtures fail safely without external requests. |
 | ING-05 | Extend the non-PDF reader and shared RAG to XML and multi-document works | Quick and Deep use selected published HTML/TXT/XML sources across collection shapes; exact section citations reopen from saved answers without regeneration; unsupported questions produce insufficient evidence. HTML/TXT single-document answer readiness is delivered in ING-02. |
-| ING-06 | Structure and recovery validation | Reviewed Kent-like rubric/grade fixtures preserve known values and flag unknown ones; cancellation, restart, retries, limits and changed-source revisions preserve assets, coverage and historical citations. |
+| [ING-06](tasks/ING-06.md) | Structured repertory and materia medica research; follows ING-02 before broader collection | Reviewed rubric/remedy/grade records and remedy sections support Quick/Deep questions with exact citations; unknown grades and incomplete coverage remain explicit. Preserve recovery and revision checks from the original ING-06 scope. |
 
 Minimum completion evidence: focused automated fixtures for format/transport/coverage boundaries, the frontend build, relevant backend checks, and concise end-to-end UI verification with one permitted HTML collection, one TXT document and one supported XML document. At least one acquisition must exercise HTTP-only delivery. Fixtures demonstrate mechanisms; record live source checks separately and do not claim live-site support from fixtures alone. Include discovered/selected/failed/excluded counts, extraction samples, source/revision identities and saved citation examples. Confirm that unselected or failed pages never appear as retrieved evidence and that collection-wide completeness questions acknowledge known omissions.
 
@@ -2136,3 +2136,57 @@ New tasks must deliver production application capabilities. Do not create standa
 
 - **Storage decision:** private Backblaze B2 is the durable PDF store, with checksum-addressed keys, authenticated reads, temporary processing files and a resumable migration preserving source/citation identity. Configuration and live cutover remain deployment work; code completion does not certify a live bucket.
 - **Current priority:** [ING-02 — Single-document HTML/TXT from source intake to answers](tasks/ING-02.md), following [ING-01](tasks/ING-01.md). The user reports that deployment already works and has deferred PROD-01 backups/restore and operational alerts while core source functionality is built. [PROD-01](tasks/PROD-01.md) remains incomplete; its implemented session/readiness slice does not establish production operations acceptance.
+
+
+## 42. Literature categories and category-aware research — 2026-10-10
+
+**Confirmed requirement; planned, not implemented:** Sources and research must distinguish materia medica, repertories and other literature. This applies to PDF and non-PDF sources, general questions, Quick/Deep research and future case workflows. Format support alone does not establish repertory support. ING-02 delivers classification and filtering; [ING-06](tasks/ING-06.md) delivers structured literature research immediately afterward, before ING-03/04/05 broaden collection and formats. Task numbers are identifiers, not delivery order. Automated prescribing and full patient repertorization remain outside these tasks.
+
+### 42.1 Classification and source review
+
+Maintain separate dimensions for literature category, evidence category, file format, acquisition method, bibliographic identity and processing/publication status. A repertory is a literature category; PDF is a format; classical reference is an evidence category. A modern materia medica is not automatically clinical research, and a clinical case report is not a trial.
+
+Use stable literature category values: `materia_medica`, `repertory`, `organon_philosophy`, `therapeutics`, `provings`, `clinical_cases`, `research`, `other`, `unclassified`. Support multiple categories per source and more precise reviewed section categories for mixed works. `unclassified` is the fallback, not an additional tag alongside confirmed categories. Keep research study design and evidence category separate from these values.
+
+Automatically identify literature categories after usable text/structure is available for every supported intake route, including PDF upload/link, HTML/TXT and later XML/collections. Use document content, headings, layout and bibliographic metadata together; do not infer solely from author, title or extension. Detect mixed works and section categories where supported. Reference-only records may carry a provisional metadata suggestion but cannot establish content classification or retrieval readiness.
+
+Prefill supported category suggestions with an “Automatically detected” label, a short evidence-based explanation and a confidence/uncertainty state. Store classifier/rule/model version, input asset/revision, evidence locations, suggested categories and decision provenance. Confidence thresholds must be configurable and validated against reviewed examples, not treated as calibrated probabilities merely because a model returns a number. Conflicting, low-confidence or unreadable material remains unclassified with “Could not confidently identify literature type — select a category.” Classifier failure must not fail the import: show a retry/manual-selection path. Never silently substitute `other` for an unknown result.
+
+Show editable categories at intake and review, badges in Sources, filters in Sources and Ask, and category labels in evidence/citation details. An administrator can accept, override or manually select one or more categories even if automatic detection fails. Preserve explicit administrator choices across classifier retries; a new revision may suggest a change but must not silently overwrite them. Record actor, time, prior value, chosen value and automatic/manual origin. Detection runs within the existing review workflow, not an extra approval screen; publication snapshots the accepted classification. An admin may explicitly retain unclassified for general passage research under existing gates; specialised routing remains unavailable without the required validated structure. Existing sources remain usable as unclassified and can be classified during review or an explicit backfill. Classification never implies verified structure or bypasses rights, access, review or compatible-index gates.
+
+Snapshot classification with publication/index and saved research scope. Corrections must invalidate affected current filtering/index metadata and structured approvals as appropriate without rewriting old answer evidence or citations. An unclassified section inherits the reviewed source categories for filtering; a reviewed section classification takes precedence, so a repertory appendix in a mixed work does not make every prose passage a repertory entry.
+
+### 42.2 Shared provenance, different content structures
+
+Reuse shared source/edition, immutable asset, processing revision and exact original locators. Category-aware extraction is layered on format-aware parsing, not a separate disconnected corpus.
+
+- **Materia medica:** retain remedy identity, source spelling, remedy entry boundaries, subsection headings, symptoms, modalities and relationships as stated. Link entries across pages/sections without mixing the next remedy or inventing missing headings.
+- **Repertory:** retain source-scoped rubric identity, parent/child hierarchy, complete rubric path, cross-references, remedy notation and source-specific grades. Preserve typography or other notation supporting grades. Store original notation, interpreted grade, the edition's grading scheme and validation status; missing or uncertain grades stay unknown. Never infer a grade from flattened text or apply one edition's scheme to another.
+- **Other literature:** preserve appropriate structure such as aphorisms, therapeutic topics, proving observations, individual cases, or research sections/tables. Support cited passage research for all categories; additional specialised extractors are introduced only with reviewed examples and acceptance coverage.
+
+Use a shared remedy dictionary with reviewed aliases/abbreviations; retain unresolved mappings and original names. It is a lookup aid, not permission to merge different preparations or conflicting author claims. Every structured assertion must link to its source, edition, asset, revision and exact supporting location(s). Embedding context is separate from exact quoted text. Content publication and structured-data readiness are separate: readable passages may support textual research even when grades or rubric associations are not verified.
+
+### 42.3 Research behavior and user experience
+
+Both Quick and Deep honor explicit source and literature-category filters as an intersection, including all generated subqueries and lexical/vector/structured lookup. No empty-result fallback may silently broaden the selected scope. Save selected filters, effective categories, searched source/revision IDs, retrieval route and coverage limitations with the answer and evaluation report. Reference-only, unreviewed, denied, disabled and incompatible material remains excluded.
+
+Route remedy-description questions toward materia medica entries, rubric questions toward verified repertory records, philosophy questions toward relevant aphorisms/commentary, and clinical-evidence questions toward eligible research. Routing prioritises relevant material within the allowed scope; it does not silently discard other relevant literature or manufacture a category match. Mixed questions can combine routes and label the contribution of each source.
+
+The RAG pipeline must use literature structure throughout preparation, retrieval and answer generation, not only show category badges:
+
+- Prepare chunks at remedy/subsection, rubric, aphorism, case or article-section boundaries as appropriate. Keep parent headings and table labels as retrieval context without turning added context into quoted source text. Store effective category, remedy/rubric identifiers, edition and revision as index metadata. Avoid splitting a rubric from its verified remedy list or combining unrelated remedies.
+- Interpret question intent and expand only reviewed remedy aliases and relevant terms. Preserve negation, modalities and rubric ancestry; ambiguous aliases remain explicit. Combine lexical and vector candidates with verified structured lookup where supported, then rerank using question relevance, category/structure fit and evidence quality. Category is a relevance signal, not proof of truth; automatic classification must not become an implicit hard filter that hides otherwise relevant evidence in an All literature search.
+- Assemble a bounded evidence set that covers the requested sources/categories and exposes disagreements rather than letting a large book or duplicated passage dominate. Deduplicate repeated evidence without merging editions or removing attribution. Query planning and follow-up searches in Deep mode use the same constraints as Quick.
+- Generate and verify claims against the selected exact passages and structured records. Validate rubric membership and grade claims against verified records, not semantic similarity or model memory. Persist retrieval route, candidate identifiers/scores, reranking decisions and limitations in the research trace. A category correction refreshes affected index/filter/routing metadata and re-embeds only if embedding input changed; stale and updated versions must not be mixed in a newly published index.
+
+Distinguish “the author describes” from “the repertory lists under this rubric” and “the study reports.” Show rubric paths and known source grades for repertory evidence, remedy/subsection context for materia medica, and appropriate headings for other literature. Preserve disagreement between authors and editions. Repertory grades are neither clinical efficacy ratings nor AI confidence scores. Classical descriptions, proving observations, clinical cases and trials must not be presented as interchangeable evidence.
+
+If structure is unverified, the system may quote an eligible passage with its limitation; it must not fabricate rubric membership, a grade or a structured comparison. Missing corpus coverage means not found in the searched material, not absence from the entire literature. Ranked patient remedy selection, diagnosis and prescribing are not delivered by source-backed rubric lookup.
+
+### 42.4 Delivery and acceptance
+
+- **ING-02:** automatic content-based classification, confidence/unknown handling, admin accept/override/manual fallback, source category storage/API/UI, reviewed metadata, existing-source fallback, PDF/HTML/TXT category filters in Quick/Deep, persisted scope and evidence labels. Preserve headings/style evidence and expose unsupported structure; do not claim structured repertory readiness.
+- **ING-06:** reviewed materia medica and repertory extraction, shared remedy aliases, category-aware chunking/index metadata, hybrid/structured retrieval and reranking, mixed-category synthesis and exact original navigation. Own the original ING-06 structure/recovery checks; ING-03/04/05 extend these contracts to collections and additional formats.
+- Verify a materia medica remedy question, a repertory rubric question with known and unknown grades, a mixed-source comparison, and at least one other literature category. Include a mixed work, ambiguous remedy alias, conflicting editions, filter intersection/empty results, unavailable structure and old citations after revision. Use permitted reviewed fixtures and a representative end-to-end corpus; report live-source verification separately. Checks belong to these implementation tasks, not a standalone evaluation-only task.
+
+Acceptance also covers confident automatic detection, misleading titles, mixed content, low-confidence/failed detection, administrator override, retry without overwriting a manual choice, and classification correction propagating to current RAG while old answers remain unchanged. Compare category-aware RAG with the existing generic passage baseline on the same reviewed questions/corpus/model: record relevant-evidence recall, claim/citation correctness and filter isolation by category, including unsupported questions. Report measured results and regressions; do not claim better research solely from adding labels or embeddings.

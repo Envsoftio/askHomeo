@@ -16,6 +16,8 @@
 
 **Review update — 2026-10-05:** Go replaces the previous Python API/worker choice at the user's request. shadcn-vue and the supporting Go libraries are recommendations pending discussion. The [POC PRD](Homeopathy_AI_Source_Ingestion_POC_PRD.md) is authoritative for implementation details; its section 56 defines revision, publication, and verification requirements. The companion handoff preserves product context and future direction.
 
+**Literature research update — 2026-10-10:** Product roadmap section 42 and this PRD section 64 define source categories and structured repertory/materia medica research. Deliver classification and filters in ING-02, then ING-06 before broader collection. These are requirements, not implemented capabilities.
+
 ---
 
 # 1. Executive Summary
@@ -2686,5 +2688,17 @@ A [review worksheet](evaluation/review_worksheet.md) now offers candidate passag
 Two additional draft smoke questions were run with only Nash and Farrington selected: a request for results of a 2026 randomized trial and a request for a current Aconite dose for chest pain. Both returned `insufficient_evidence` without a treatment recommendation or fabricated modern result (about 24 seconds each). These are useful regressions, not a substitute for the five reviewed unsupported cases.
 
 Focused author, book and acronym answers now honor explicit Ask source selection as well as general passage retrieval. A live Nash-only “Who is Nash?” job returned a Nash citation and persisted only the Nash source ID. The same question with Farrington alone returned `insufficient_evidence`, no citation, and retained the Farrington selection.
+
+# 64. Literature classification and structured research — 2026-10-10
+
+The confirmed cross-format requirements are specified in [product roadmap section 42](Homeopathy_AI_Product_Requirements_and_Roadmap.md#42-literature-categories-and-category-aware-research--2026-10-10). This section makes them part of the POC implementation contract and qualifies earlier generic page/chunk retrieval guidance: generic text retrieval alone does not establish repertory support.
+
+- Automatically detect literature type from usable content, headings/layout and metadata for supported intake routes. Prefill reviewable categories with rationale, uncertainty and classifier/revision provenance. Low-confidence or failed detection remains unclassified and offers admin selection/retry without failing import; admins can always override suggestions and their choices survive retries. Metadata-only suggestions remain provisional. Use the existing review workflow and snapshot accepted categories at publication.
+- RAG must use category-aware chunking and index metadata, reviewed aliases, hybrid lexical/vector plus verified structured retrieval, reranking and source-diverse evidence selection under section 42.3. Treat category as a relevance signal within explicit filters; do not silently exclude relevant All literature evidence based on a guess. Validate rubric/grade claims against structured records and refresh affected indexes after category corrections. Compare retrieval recall and claim/citation correctness against the generic baseline using the same reviewed corpus/questions/model; report regressions and uncertainty.
+- Store reviewed literature categories independently of evidence category, asset format, acquisition and publication status. Support materia medica, repertory, philosophy, therapeutics, provings, clinical cases, research, other and unclassified, using section 42.1's stable values. Allow mixed works with section-level overrides; default existing sources to unclassified without inventing labels or blocking otherwise eligible textual research.
+- Preserve remedy/subsection structure for materia medica and rubric hierarchy, associations, original notation and source-specific grade schemes for repertories. Structured records are revision-scoped and cite exact saved originals. Shared remedy aliases retain ambiguity; different editions/preparations are not silently merged. Unknown structure or grades remain explicit, independently of text readiness.
+- Apply selected source/category intersections to Quick/Deep passage and structured retrieval, including every subquery. Save scope, category snapshots, route and coverage with research results. Distinguish author descriptions, repertory listings, proving observations, clinical cases and research findings; grades do not establish efficacy. Other literature must remain available for appropriate cited research.
+- Reuse rights, access, review, publication and index gates. Classification/extraction corrections must not rewrite old answers, quotations or citations. Unsupported structured questions receive a limitation or insufficient evidence, not invented rubric membership or grades.
+- Implement [ING-02](tasks/ING-02.md) classification/filtering alongside complete HTML/TXT intake, then [ING-06](tasks/ING-06.md) reviewed structured extraction and research before broader ING-03/04/05 expansion. Acceptance includes remedy lookup, graded and uncertain rubrics, mixed works, other literature, filter isolation, cross-edition differences, recovery and historical citations. Neither task implements full patient repertorization or automated prescribing.
 
 # END OF POC PRD
