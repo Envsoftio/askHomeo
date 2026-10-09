@@ -1,6 +1,8 @@
 # ING-06 — Structured repertory and materia medica research
 
-**Status:** Planned; not implemented. Implement immediately after ING-02, before broader ING-03/04/05 collection and format expansion. Expands the existing ING-06 structure/recovery scope into a complete application feature.
+**Status:** In progress. The first schema and manual review API slice is implemented; research integration and end-to-end acceptance remain open. Implement before broader ING-03/04/05 collection and format expansion.
+
+**Implementation checkpoint — 2026-10-10:** Migration 040 adds revision-scoped materia medica/rubric entries, rubric associations and cross-references, a remedy/alias dictionary, exact page/block support, review decisions and publication/index-gated eligibility views. Admin APIs can create remedies and draft entries/associations, then accept or reject reviewed mappings; reviewer APIs list the current entries and associations. Exact Unicode text matching, source/revision foreign keys, required grade schemes and NULL unknown grades are enforced in PostgreSQL. A clean disposable migration and synthetic constraint fixtures passed. No extraction adapter, automatic alias review, structured retrieval/answer route, original navigation UI, correction-to-new-revision flow or baseline evaluation is claimed by this checkpoint. The existing research route still declines structured repertory questions.
 
 **User outcome:** A researcher can ask about a remedy description, look up a repertory rubric, or compare literature categories, see source-specific evidence and limitations, and open each exact original passage or entry.
 
