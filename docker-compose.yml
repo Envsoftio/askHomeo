@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: homeopath
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev}
     ports:
-      - "127.0.0.1:5437:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5437}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -34,7 +34,7 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-Local administrator}
       REVIEWER_NAME: ${REVIEWER_NAME:-Local reviewer}
       AUTH_PRINCIPALS_JSON: ${AUTH_PRINCIPALS_JSON:-}
-      AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
+      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
@@ -60,6 +60,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
     restart: unless-stopped
   worker:
     build:
@@ -68,7 +70,7 @@ services:
     command: ["/app/server", "-mode", "worker"]
     environment:
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
-      AI_PROVIDER: ${AI_PROVIDER:-lmstudio}
+      AI_PROVIDER: ${AI_PROVIDER:-openrouter}
       AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:1234/v1}
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
@@ -100,7 +102,7 @@ services:
       context: .
       dockerfile: apps/frontend/Dockerfile
     ports:
-      - "127.0.0.1:8088:80"
+      - "${FRONTEND_BIND_ADDR:-127.0.0.1}:${FRONTEND_PORT:-8088}:80"
     depends_on:
       - api
     restart: unless-stopped
