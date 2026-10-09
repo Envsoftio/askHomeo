@@ -1,6 +1,6 @@
 # ING-02 — Single-document HTML/TXT from source intake to answers
 
-**Status:** Next implementation task; not yet implemented.
+**Status:** Implementation in progress. Backend, frontend, migrations and disposable database fixtures are in place; complete browser and real-model acceptance remains to be exercised.
 
 **User outcome:** An administrator can add one HTML page or plain-text document by upload or public HTTP/HTTPS URL, inspect and correct its extracted content, record rights, publish and index it, then ask a question and reopen an exact saved citation in the original saved document. Preview alone is not an import.
 

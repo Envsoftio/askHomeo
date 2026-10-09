@@ -1,6 +1,6 @@
-export type Source={id:string,title:string,author:string,status:string,rights_status:string,pages_read:number,pages_total:number,error:string,supersedes_source_id:string|null,superseded:boolean}
+export type Source={id:string,title:string,author:string,status:string,rights_status:string,document_format:'pdf'|'html'|'txt',literature_categories:string[],evidence_category:string,pages_read:number,pages_total:number,error:string,supersedes_source_id:string|null,superseded:boolean}
 export type Page={id:string,pdf_page_index:number,scan_page_index:number,printed_label:string,review_status:string,page_kind:string,review_note:string,triage_reason:string,text_qa_status:string,text_qa_reason:string,text:string,image_url:string}
-export type Citation={id:string,passage:string,title:string,author:string,printed_page:string,scan_position:number,pdf_url:string,image_url:string,source_url:string}
+export type Citation={id:string,passage:string,title:string,author:string,printed_page?:string,scan_position?:number,pdf_url?:string,image_url?:string,source_url?:string,format?:string,section_key?:string,reader_text?:string,original_text?:string,start_character?:number,end_character?:number,original_url?:string,document_url?:string,literature_categories?:string[],evidence_category?:string}
 export class ApiError extends Error{constructor(message:string,public status:number){super(message)}}
 export async function api<T>(path:string,init:RequestInit={}):Promise<T>{
  let res:Response

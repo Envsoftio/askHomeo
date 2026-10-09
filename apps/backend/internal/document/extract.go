@@ -90,16 +90,13 @@ func Extract(raw []byte, contentType, charsetOverride string) (Result, error) {
 		return Result{}, err
 	}
 	out.Format, out.Charset = format, charset
-	if format == "html" && charset != "utf-8" {
-		for i := range out.Blocks {
-			out.Blocks[i].StartByte, out.Blocks[i].EndByte = -1, -1
+	for i := range out.Blocks {
+		start, e1 := originalOffset(decoded, charset, out.Blocks[i].StartByte, raw)
+		end, e2 := originalOffset(decoded, charset, out.Blocks[i].EndByte, raw)
+		if e1 != nil || e2 != nil {
+			return Result{}, errors.New("could not map extracted text to original document bytes")
 		}
-	}
-	if charset == "utf-8" && bytes.HasPrefix(raw, []byte{0xef, 0xbb, 0xbf}) {
-		for i := range out.Blocks {
-			out.Blocks[i].StartByte += 3
-			out.Blocks[i].EndByte += 3
-		}
+		out.Blocks[i].StartByte, out.Blocks[i].EndByte = start, end
 	}
 	if len(out.Blocks) == 0 {
 		return Result{}, errors.New("document has no substantive text; it may be a JavaScript shell or login page")
@@ -220,13 +217,44 @@ func decodeUTF16(raw []byte, little bool) (string, string, error) {
 	return decoded, label, nil
 }
 
-func extractText(decoded string, charset string) (Result, error) {
-	// For UTF-8 the text offsets identify exact original bytes. Other encodings
-	// need a character-to-byte map before offsets may be certified for citations.
-	result := Result{}
-	if charset != "utf-8" {
-		result.Warnings = append(result.Warnings, "Original byte offsets require encoding-aware review before citation")
+func originalOffset(decoded, charset string, position int, raw []byte) (int, error) {
+	if position < 0 || position > len(decoded) || !utf8.ValidString(decoded[:position]) {
+		return 0, errors.New("invalid decoded offset")
 	}
+	bom := 0
+	if bytes.HasPrefix(raw, []byte{0xef, 0xbb, 0xbf}) {
+		bom = 3
+	}
+	if bytes.HasPrefix(raw, []byte{0xff, 0xfe}) || bytes.HasPrefix(raw, []byte{0xfe, 0xff}) {
+		bom = 2
+	}
+	prefix := decoded[:position]
+	switch charset {
+	case "utf-8":
+		return bom + len(prefix), nil
+	case "windows-1252", "cp1252":
+		encoded, _, err := transform.String(charmap.Windows1252.NewEncoder(), prefix)
+		return bom + len(encoded), err
+	case "iso-8859-1", "latin1":
+		encoded, _, err := transform.String(charmap.ISO8859_1.NewEncoder(), prefix)
+		return bom + len(encoded), err
+	case "utf-16le", "utf-16be":
+		n := bom
+		for _, r := range prefix {
+			if r > 0xffff {
+				n += 4
+			} else {
+				n += 2
+			}
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("unsupported offset charset %q", charset)
+	}
+}
+
+func extractText(decoded string, charset string) (Result, error) {
+	result := Result{}
 	start := 0
 	for start < len(decoded) {
 		breakAt := paragraphBreak.FindStringIndex(decoded[start:])
@@ -240,9 +268,6 @@ func extractText(decoded string, charset string) (Result, error) {
 			key := fmt.Sprintf("paragraph-%d", len(result.Blocks)+1)
 			left := strings.Index(part, trimmed)
 			block := Block{Key: key, Kind: "paragraph", Text: trimmed, StartByte: start + left, EndByte: start + left + len(trimmed)}
-			if charset != "utf-8" {
-				block.StartByte, block.EndByte = -1, -1
-			}
 			result.Blocks = append(result.Blocks, block)
 		}
 		if breakAt == nil {
@@ -256,6 +281,7 @@ func extractText(decoded string, charset string) (Result, error) {
 func extractHTML(decoded string) (Result, error) {
 	z := html.NewTokenizer(strings.NewReader(decoded))
 	result := Result{}
+	hasTable := false
 	type frame struct {
 		tag    string
 		hidden bool
@@ -264,6 +290,7 @@ func extractHTML(decoded string) (Result, error) {
 	var current *Block
 	var content strings.Builder
 	heading := ""
+	keys := map[string]int{}
 	offset := 0
 	flush := func() {
 		if current == nil {
@@ -271,6 +298,11 @@ func extractHTML(decoded string) (Result, error) {
 		}
 		current.Text = whitespace.ReplaceAllString(strings.TrimSpace(content.String()), " ")
 		if current.Text != "" {
+			base := current.Key
+			keys[base]++
+			if keys[base] > 1 {
+				current.Key = fmt.Sprintf("%s-%d", base, keys[base])
+			}
 			if current.Kind == "heading" {
 				heading = current.Text
 			} else {
@@ -295,6 +327,9 @@ func extractHTML(decoded string) (Result, error) {
 		tok := z.Token()
 		if tt == html.StartTagToken || tt == html.SelfClosingTagToken {
 			tag := strings.ToLower(tok.Data)
+			if tag == "table" {
+				hasTable = true
+			}
 			parentHidden := len(stack) > 0 && stack[len(stack)-1].hidden
 			hidden := parentHidden || isHiddenTag(tag, tok.Attr)
 			if !hidden && blockKind(tag) != "" {
@@ -337,6 +372,9 @@ func extractHTML(decoded string) (Result, error) {
 	if len(result.Blocks) > 0 {
 		result.Warnings = append(result.Warnings, "HTML block boundaries require review before exact citations")
 	}
+	if hasTable {
+		result.Warnings = append(result.Warnings, "Table cells are extracted in reading order; row and column relationships, repertory rubrics, and grades are not verified")
+	}
 	return result, nil
 }
 
@@ -364,6 +402,17 @@ func isHiddenTag(tag string, attrs []html.Attribute) bool {
 	for _, a := range attrs {
 		if a.Key == "hidden" || (a.Key == "aria-hidden" && strings.EqualFold(a.Val, "true")) {
 			return true
+		}
+		if a.Key == "role" && strings.EqualFold(a.Val, "navigation") {
+			return true
+		}
+		if a.Key == "class" || a.Key == "id" {
+			for _, part := range strings.FieldsFunc(strings.ToLower(a.Val), func(r rune) bool { return r == ' ' || r == '-' || r == '_' }) {
+				switch part {
+				case "nav", "navbar", "menu", "sidebar", "breadcrumbs", "cookiebanner":
+					return true
+				}
+			}
 		}
 	}
 	return false

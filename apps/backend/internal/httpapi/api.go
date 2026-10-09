@@ -53,6 +53,16 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/imports/nash", a.importNash)
 	mux.HandleFunc("POST /api/v1/imports/farrington", a.importFarrington)
 	mux.HandleFunc("POST /api/v1/sources/upload", a.uploadPDF)
+	mux.HandleFunc("POST /api/v1/sources/upload-document", a.uploadDocument)
+	mux.HandleFunc("POST /api/v1/sources/import-document-url", a.importDocumentURL)
+	mux.HandleFunc("POST /api/v1/sources/{id}/reimport-document", a.reimportDocumentURL)
+	mux.HandleFunc("GET /api/v1/sources/{id}/blocks", a.documentBlocks)
+	mux.HandleFunc("POST /api/v1/document-blocks/{id}/review", a.reviewDocumentBlock)
+	mux.HandleFunc("PUT /api/v1/sources/{id}/categories", a.setLiteratureCategories)
+	mux.HandleFunc("POST /api/v1/sources/{id}/categories/retry", a.retryLiteratureClassification)
+	mux.HandleFunc("PUT /api/v1/document-blocks/{id}/categories", a.setDocumentBlockCategories)
+	mux.HandleFunc("PUT /api/v1/pages/{id}/categories", a.setPageCategories)
+	mux.HandleFunc("GET /api/v1/sources/{id}/document/{revision}/raw", a.rawDocument)
 	mux.HandleFunc("POST /api/v1/sources/import-url", a.importPDFURL)
 	mux.HandleFunc("POST /api/v1/sources/preview-url", a.previewURL)
 	mux.HandleFunc("POST /api/v1/sources/{id}/reprocess", a.reprocess)
@@ -318,7 +328,7 @@ func (a *API) pageImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 func (a *API) sources(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' ORDER BY s.created_at DESC LIMIT 50`)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' ORDER BY s.created_at DESC LIMIT 50`)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -329,13 +339,14 @@ func (a *API) sources(w http.ResponseWriter, r *http.Request) {
 		var id uuid.UUID
 		var supersedes *uuid.UUID
 		var superseded bool
-		var title, author, status, rights, problem string
+		var title, author, status, rights, problem, format, evidenceCategory string
+		var categories []string
 		var completed, total int
-		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded); err != nil {
+		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded, &format, &categories, &evidenceCategory); err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded})
+		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "document_format": format, "literature_categories": categories, "evidence_category": evidenceCategory, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded})
 	}
 	write(w, 200, out)
 }
@@ -346,7 +357,7 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 	}
 	var title, author, status, rights, sha, path string
 	var pages, reviewed, unclassified, missing, suspect, checked, textTotal int
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT title,author,status,rights_status,pdf_sha256,pdf_path,(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0),(SELECT count(*) FROM pages WHERE source_id=s.id AND review_status='reviewed' AND page_kind='text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='unclassified'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='missing_text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='text' AND text_qa_status='suspect'),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NOT NULL),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text') FROM sources s WHERE id=$1`, id).Scan(&title, &author, &status, &rights, &sha, &path, &pages, &reviewed, &unclassified, &missing, &suspect, &checked, &textTotal)
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT title,author,status,rights_status,coalesce(pdf_sha256,''),coalesce(pdf_path,''),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0),(SELECT count(*) FROM pages WHERE source_id=s.id AND review_status='reviewed' AND page_kind='text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='unclassified'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='missing_text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='text' AND text_qa_status='suspect'),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NOT NULL),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text') FROM sources s WHERE id=$1`, id).Scan(&title, &author, &status, &rights, &sha, &path, &pages, &reviewed, &unclassified, &missing, &suspect, &checked, &textTotal)
 	if err != nil {
 		fail(w, 404, "source not found")
 		return
@@ -389,7 +400,7 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rightsMark, rightsEvidenceURL string
-	if !strings.HasPrefix(sourceKey, "upload-") {
+	if !strings.HasPrefix(sourceKey, "upload-") && !strings.HasPrefix(sourceKey, "document-") {
 		seed, seedErr := a.Store.Starter(sourceKey)
 		if seedErr != nil {
 			fail(w, 500, "could not read source evidence")
@@ -397,7 +408,19 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 		}
 		rightsMark, rightsEvidenceURL = seed.Rights.Mark, seed.Rights.RightsSourceURL
 	}
-	write(w, 200, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "pdf_sha256": sha, "pages_read": pages, "pages_reviewed": reviewed, "unclassified_pages": unclassified, "missing_text_pages": missing, "suspect_text_pages": suspect, "text_pages_checked": checked, "text_pages_total": textTotal, "text_qa_status": textQAStatus, "text_qa_error": textQAError, "auto_blank_pages": autoBlank, "triage_status": triageStatus, "triage_error": triageError, "triage_completed": triageDone, "triage_total": triageTotal, "review_coverage": map[string]bool{"front": front > 0, "beginning": beginning > 0, "middle": middle > 0, "end": end > 0}, "pdf_url": "/api/v1/sources/" + id.String() + "/pdf", "source_url": sourceURL, "pdf_origin_url": pdfOriginURL, "rights_mark": rightsMark, "rights_evidence_url": rightsEvidenceURL, "edition": edition, "publication_info": publicationInfo, "repository": repository, "rights_statement": rightsStatement, "retraction_notice_url": retractionNoticeURL, "edition_id": editionID, "source_record_id": recordID, "source_asset_id": assetID, "processing_revision_id": revisionID, "published_revision_id": publishedRevisionID, "supersedes_source_id": supersedesID, "rights_decision_id": rightsDecisionID, "superseded": superseded})
+	var documentFormat, requestedURL, finalURL, transport, acquiredAt string
+	var blockCount, reviewedBlocks int
+	if err = a.Store.DB.QueryRow(r.Context(), `SELECT s.document_format,coalesce(a.requested_url,''),coalesce(a.final_url,''),coalesce(a.transport,''),coalesce(a.acquired_at::text,''),(SELECT count(*) FROM document_blocks b WHERE b.source_id=s.id AND b.processing_revision_id=s.current_revision_id),(SELECT count(*) FROM document_blocks b WHERE b.source_id=s.id AND b.processing_revision_id=s.current_revision_id AND b.review_status<>'pending') FROM sources s LEFT JOIN document_acquisitions a ON a.source_id=s.id WHERE s.id=$1`, id).Scan(&documentFormat, &requestedURL, &finalURL, &transport, &acquiredAt, &blockCount, &reviewedBlocks); err != nil {
+		fail(w, 500, "could not read document details")
+		return
+	}
+	var categories, suggested []string
+	var categoryOrigin, suggestionState, suggestionReason, classifierVersion, evidenceCategory string
+	if err = a.Store.DB.QueryRow(r.Context(), `SELECT s.literature_categories,s.literature_category_origin,s.evidence_category,coalesce(cs.categories,ARRAY['unclassified']::text[]),coalesce(cs.state,''),coalesce(cs.reason,''),coalesce(cs.classifier_version,'') FROM sources s LEFT JOIN literature_category_suggestions cs ON cs.processing_revision_id=s.current_revision_id WHERE s.id=$1`, id).Scan(&categories, &categoryOrigin, &evidenceCategory, &suggested, &suggestionState, &suggestionReason, &classifierVersion); err != nil {
+		fail(w, 500, "could not read literature categories")
+		return
+	}
+	write(w, 200, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "literature_categories": categories, "literature_category_origin": categoryOrigin, "evidence_category": evidenceCategory, "suggested_categories": suggested, "classification_state": suggestionState, "classification_reason": suggestionReason, "classifier_version": classifierVersion, "document_format": documentFormat, "document_blocks": blockCount, "document_blocks_reviewed": reviewedBlocks, "requested_url": requestedURL, "final_url": finalURL, "transport": transport, "acquired_at": acquiredAt, "pdf_sha256": sha, "pages_read": pages, "pages_reviewed": reviewed, "unclassified_pages": unclassified, "missing_text_pages": missing, "suspect_text_pages": suspect, "text_pages_checked": checked, "text_pages_total": textTotal, "text_qa_status": textQAStatus, "text_qa_error": textQAError, "auto_blank_pages": autoBlank, "triage_status": triageStatus, "triage_error": triageError, "triage_completed": triageDone, "triage_total": triageTotal, "review_coverage": map[string]bool{"front": front > 0, "beginning": beginning > 0, "middle": middle > 0, "end": end > 0}, "pdf_url": "/api/v1/sources/" + id.String() + "/pdf", "source_url": sourceURL, "pdf_origin_url": pdfOriginURL, "rights_mark": rightsMark, "rights_evidence_url": rightsEvidenceURL, "edition": edition, "publication_info": publicationInfo, "repository": repository, "rights_statement": rightsStatement, "retraction_notice_url": retractionNoticeURL, "edition_id": editionID, "source_record_id": recordID, "source_asset_id": assetID, "processing_revision_id": revisionID, "published_revision_id": publishedRevisionID, "supersedes_source_id": supersedesID, "rights_decision_id": rightsDecisionID, "superseded": superseded})
 }
 func (a *API) pages(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)
@@ -602,6 +625,15 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var format string
+	if err := a.Store.DB.QueryRow(r.Context(), `SELECT document_format FROM sources WHERE id=$1`, id).Scan(&format); err != nil {
+		fail(w, 404, "source not found")
+		return
+	}
+	if format != "pdf" {
+		a.publishDocument(w, r, id)
+		return
+	}
 	tx, err := a.Store.DB.Begin(r.Context())
 	if err != nil {
 		fail(w, 500, err.Error())
@@ -675,7 +707,7 @@ func (a *API) publish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE publications p SET processing_revision_id=s.current_revision_id,edition_id=s.edition_id,source_asset_id=s.primary_asset_id,
- metadata_snapshot=jsonb_build_object('title',s.title,'author',s.author,'edition',s.edition,'publication_info',s.publication_info,'repository',s.repository,'source_url',coalesce(s.source_url,'')),
+ metadata_snapshot=jsonb_build_object('title',s.title,'author',s.author,'edition',s.edition,'publication_info',s.publication_info,'repository',s.repository,'source_url',coalesce(s.source_url,''),'literature_categories',s.literature_categories,'evidence_category',s.evidence_category),
  rights_snapshot=jsonb_build_object('decision',s.rights_status,'statement',s.rights_statement,'note',coalesce(s.review_note,''),'reviewed_at',s.reviewed_at),rights_decision_id=$2,published_by_role='admin',approved_by_principal_id=(SELECT reviewer_principal_id FROM rights_decisions WHERE id=$2),approved_at=(SELECT created_at FROM rights_decisions WHERE id=$2),published_by_principal_id=$3,published_at=now()
  ,page_labels_snapshot=(SELECT coalesce(jsonb_object_agg(pg.pdf_page_index,coalesce(pg.printed_label,'')),'{}'::jsonb) FROM pages pg WHERE pg.source_id=s.id)
  FROM sources s WHERE p.id=$1 AND s.id=p.source_id`, publicationID, rightsDecisionID, requestPrincipal(r.Context()).ID)
@@ -721,11 +753,21 @@ func (a *API) citation(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var documentCitation bool
+	if err := a.Store.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM answer_citations ac JOIN chunks c ON c.id=ac.chunk_id WHERE ac.id=$1 AND c.document_block_id IS NOT NULL)`, id).Scan(&documentCitation); err != nil {
+		fail(w, 500, "could not resolve citation")
+		return
+	}
+	if documentCitation {
+		a.citationDocument(w, r, id)
+		return
+	}
 	var chunk, page, source, editionID, assetID, revisionID, publicationID uuid.UUID
 	var passage, title, author, label, sha, img, pageText, pageSHA, sourceURL string
 	var pdfIndex, scanIndex int
+	var categorySnapshot []byte
 	principal := requestPrincipal(r.Context())
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT c.id,p.id,s.id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),sa.sha256,p.image_url,p.pdf_page_index,p.scan_page_index,p.text_raw,p.text_sha256,coalesce(s.source_url,''),pub.edition_id,sa.id,p.processing_revision_id,pub.id FROM answer_citations ac JOIN answers ans ON ans.id=ac.answer_id JOIN chunks c ON c.id=ac.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN source_assets sa ON sa.id=p.source_asset_id JOIN publications pub ON pub.source_id=s.id AND pub.processing_revision_id=p.processing_revision_id WHERE ac.id=$1 AND ($2='admin' OR ans.owner_principal_id=$3) AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' AND substring(p.text_raw from c.start_character+1 for c.end_character-c.start_character)=c.text_exact`, id, principal.Role, principal.ID).Scan(&chunk, &page, &source, &passage, &title, &author, &label, &sha, &img, &pdfIndex, &scanIndex, &pageText, &pageSHA, &sourceURL, &editionID, &assetID, &revisionID, &publicationID)
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT c.id,p.id,s.id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),sa.sha256,p.image_url,p.pdf_page_index,p.scan_page_index,p.text_raw,p.text_sha256,coalesce(s.source_url,''),pub.edition_id,sa.id,p.processing_revision_id,pub.id,coalesce(ans.literature_category_snapshot->c.id::text,'{}'::jsonb) FROM answer_citations ac JOIN answers ans ON ans.id=ac.answer_id JOIN chunks c ON c.id=ac.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN source_assets sa ON sa.id=p.source_asset_id JOIN publications pub ON pub.source_id=s.id AND pub.processing_revision_id=p.processing_revision_id WHERE ac.id=$1 AND ($2='admin' OR ans.owner_principal_id=$3) AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' AND substring(p.text_raw from c.start_character+1 for c.end_character-c.start_character)=c.text_exact`, id, principal.Role, principal.ID).Scan(&chunk, &page, &source, &passage, &title, &author, &label, &sha, &img, &pdfIndex, &scanIndex, &pageText, &pageSHA, &sourceURL, &editionID, &assetID, &revisionID, &publicationID, &categorySnapshot)
 	if err != nil {
 		fail(w, 404, "citation not available")
 		return
@@ -735,7 +777,12 @@ func (a *API) citation(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "original page checksum does not match")
 		return
 	}
-	write(w, 200, map[string]any{"id": id, "chunk_id": chunk, "page_id": page, "source_id": source, "edition_id": editionID, "source_asset_id": assetID, "processing_revision_id": revisionID, "publication_id": publicationID, "passage": passage, "title": title, "author": author, "printed_page": label, "scan_position": scanIndex + 1, "pdf_page_index": pdfIndex, "pdf_sha256": sha, "image_url": img, "pdf_url": "/api/v1/sources/" + source.String() + "/pdf#page=" + strconv.Itoa(pdfIndex+1), "source_url": sourceURL})
+	var categoryLabel struct {
+		Categories       []string `json:"categories"`
+		EvidenceCategory string   `json:"evidence_category"`
+	}
+	_ = json.Unmarshal(categorySnapshot, &categoryLabel)
+	write(w, 200, map[string]any{"id": id, "chunk_id": chunk, "page_id": page, "source_id": source, "edition_id": editionID, "source_asset_id": assetID, "processing_revision_id": revisionID, "publication_id": publicationID, "passage": passage, "title": title, "author": author, "literature_categories": categoryLabel.Categories, "evidence_category": categoryLabel.EvidenceCategory, "printed_page": label, "scan_position": scanIndex + 1, "pdf_page_index": pdfIndex, "pdf_sha256": sha, "image_url": img, "pdf_url": "/api/v1/sources/" + source.String() + "/pdf#page=" + strconv.Itoa(pdfIndex+1), "source_url": sourceURL})
 }
 func Token() string { return os.Getenv("API_TOKEN") }
 

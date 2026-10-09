@@ -160,9 +160,13 @@ func (w *Worker) reconcileExpiredJobs(ctx context.Context) error {
 	return nil
 }
 func (w *Worker) process(ctx context.Context, jobID, sourceID uuid.UUID) error {
-	var sourceKey, pdfSHA string
-	if err := w.Store.DB.QueryRow(ctx, `SELECT source_key,pdf_sha256 FROM sources WHERE id=$1`, sourceID).Scan(&sourceKey, &pdfSHA); err != nil {
+	var sourceKey, format string
+	var pdfSHA *string
+	if err := w.Store.DB.QueryRow(ctx, `SELECT source_key,pdf_sha256,document_format FROM sources WHERE id=$1`, sourceID).Scan(&sourceKey, &pdfSHA, &format); err != nil {
 		return err
+	}
+	if format != "pdf" {
+		return w.processDocument(ctx, jobID, sourceID)
 	}
 	if err := w.recordRevisionTools(ctx, sourceID); err != nil {
 		return err
@@ -179,7 +183,7 @@ func (w *Worker) process(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	}
 	pdfMatched := false
 	for _, asset := range seed.Assets {
-		if asset.Kind == "pdf" && asset.SHA256 == pdfSHA {
+		if asset.Kind == "pdf" && pdfSHA != nil && asset.SHA256 == *pdfSHA {
 			pdfMatched = true
 		}
 	}
@@ -268,6 +272,9 @@ func (w *Worker) finishIngest(ctx context.Context, jobID, sourceID uuid.UUID) er
 		return err
 	}
 	_, err = w.Store.DB.Exec(ctx, `UPDATE processing_revisions SET status='review',completed_at=now() WHERE id=(SELECT current_revision_id FROM sources WHERE id=$1)`, sourceID)
+	if err == nil {
+		w.suggestPDFCategories(ctx, sourceID)
+	}
 	return err
 }
 func (w *Worker) processLocal(ctx context.Context, jobID, sourceID uuid.UUID) error {

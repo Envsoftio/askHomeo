@@ -23,6 +23,9 @@ type hit struct {
 	ID                                  uuid.UUID
 	SourceID                            uuid.UUID
 	Text, Title, Author, Page, ImageURL string
+	Categories                          []string
+	Format                              string
+	EvidenceCategory                    string
 	Scan                                int
 	Score                               float64
 }
@@ -31,6 +34,8 @@ type searchTrace struct {
 	SourceScope    string `json:"source_scope"`
 	CandidateCount int    `json:"candidate_count"`
 }
+
+var structuredRepertoryQuestion = regexp.MustCompile(`(?i)\b(repertori[sz]ation|repertori[sz]e|(grade|score|rank|weight).{0,80}(rubric|remed)|(rubric|remed).{0,80}(grade|score|rank|weight)|remed(?:y|ies).{0,50}under.{0,30}rubric)\b`)
 
 var questionTermPattern = regexp.MustCompile(`[\p{L}\p{N}]{3,}`)
 var quoteWordPattern = regexp.MustCompile(`[\p{L}\p{N}]+`)
@@ -110,7 +115,7 @@ func (a *API) reindex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var total int
-	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, id).Scan(&total)
+	err = tx.QueryRow(r.Context(), `SELECT count(*) FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, id).Scan(&total)
 	if err != nil || total == 0 {
 		fail(w, 409, "No eligible passages found.")
 		return
@@ -155,12 +160,19 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 	var q, status, answer, model, revision, promptRevision, mode string
 	var omittedClaims int
 	var sectionsJSON []byte
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT question,status,answer_text,answer_model,answer_revision,prompt_revision,research_mode,omitted_claim_count,research_sections FROM answers WHERE id=$1`, id).Scan(&q, &status, &answer, &model, &revision, &promptRevision, &mode, &omittedClaims, &sectionsJSON)
+	var categoryScope []string
+	var categorySnapshot []byte
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT question,status,answer_text,answer_model,answer_revision,prompt_revision,research_mode,omitted_claim_count,research_sections,literature_category_scope,literature_category_snapshot FROM answers WHERE id=$1`, id).Scan(&q, &status, &answer, &model, &revision, &promptRevision, &mode, &omittedClaims, &sectionsJSON, &categoryScope, &categorySnapshot)
 	if err != nil {
 		fail(w, 404, "answer not found")
 		return
 	}
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT ac.id,ac.evidence_label,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1 FROM answer_citations ac JOIN chunks c ON c.id=ac.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' ORDER BY ac.ordinal`, id)
+	var categoryByChunk map[string]struct {
+		Categories       []string `json:"categories"`
+		EvidenceCategory string   `json:"evidence_category"`
+	}
+	_ = json.Unmarshal(categorySnapshot, &categoryByChunk)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT ac.id,c.id,ac.evidence_label,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.format FROM answer_citations ac JOIN chunks c ON c.id=ac.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' ORDER BY ac.ordinal`, id)
 	if err != nil {
 		fail(w, 500, "could not read citations")
 		return
@@ -168,14 +180,14 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	citations := []any{}
 	for rows.Next() {
-		var cid uuid.UUID
-		var label, title, author, page string
+		var cid, chunkID uuid.UUID
+		var label, title, author, page, format string
 		var scan int
-		if err = rows.Scan(&cid, &label, &title, &author, &page, &scan); err != nil {
+		if err = rows.Scan(&cid, &chunkID, &label, &title, &author, &page, &scan, &format); err != nil {
 			fail(w, 500, "could not read citations")
 			return
 		}
-		citations = append(citations, map[string]any{"id": cid, "label": label, "title": title, "author": author, "printed_page": page, "scan_position": scan})
+		citations = append(citations, map[string]any{"id": cid, "chunk_id": chunkID, "label": label, "title": title, "author": author, "printed_page": page, "scan_position": scan, "literature_categories": categoryByChunk[chunkID.String()].Categories, "evidence_category": categoryByChunk[chunkID.String()].EvidenceCategory, "format": format})
 	}
 	if rows.Err() != nil {
 		fail(w, 500, "could not read citations")
@@ -223,7 +235,7 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "could not read search record")
 		return
 	}
-	candidateRows, err := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,c.id,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url,left(c.text_exact,500),EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' ORDER BY ac.ordinal`, id)
+	candidateRows, err := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,c.id,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,left(c.text_exact,500),EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' ORDER BY ac.ordinal`, id)
 	if err != nil {
 		fail(w, 500, "could not read evidence record")
 		return
@@ -239,7 +251,7 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "could not read evidence record")
 			return
 		}
-		evidence = append(evidence, map[string]any{"rank": rank, "chunk_id": chunkID, "title": title, "author": author, "printed_page": page, "scan_position": scan, "image_url": imageURL, "preview": preview, "cited": cited})
+		evidence = append(evidence, map[string]any{"rank": rank, "chunk_id": chunkID, "title": title, "author": author, "printed_page": page, "scan_position": scan, "image_url": imageURL, "literature_categories": categoryByChunk[chunkID.String()].Categories, "evidence_category": categoryByChunk[chunkID.String()].EvidenceCategory, "preview": preview, "cited": cited})
 	}
 	err = candidateRows.Err()
 	candidateRows.Close()
@@ -252,13 +264,14 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "could not read research sections")
 		return
 	}
-	write(w, 200, map[string]any{"answer_id": id, "question": q, "status": status, "answer": answer, "answer_model": model, "answer_revision": revision, "prompt_revision": promptRevision, "research_mode": mode, "omitted_claim_count": omittedClaims, "source_ids": selectedSources, "citations": citations, "searches": searches, "evidence": evidence, "sections": sections})
+	write(w, 200, map[string]any{"answer_id": id, "question": q, "status": status, "answer": answer, "answer_model": model, "answer_revision": revision, "prompt_revision": promptRevision, "research_mode": mode, "literature_categories": categoryScope, "category_snapshot": json.RawMessage(categorySnapshot), "omitted_claim_count": omittedClaims, "source_ids": selectedSources, "citations": citations, "searches": searches, "evidence": evidence, "sections": sections})
 }
 func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Question  string      `json:"question"`
-		Mode      string      `json:"mode"`
-		SourceIDs []uuid.UUID `json:"source_ids"`
+		Question   string      `json:"question"`
+		Mode       string      `json:"mode"`
+		SourceIDs  []uuid.UUID `json:"source_ids"`
+		Categories []string    `json:"literature_categories"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
 		fail(w, 400, "invalid question")
@@ -281,6 +294,13 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Choose at most 50 sources.")
 		return
 	}
+	if len(body.Categories) > 0 && !validLiteratureCategories(body.Categories) {
+		fail(w, 400, "choose valid literature categories")
+		return
+	}
+	if body.Categories == nil {
+		body.Categories = []string{}
+	}
 	selected := make([]uuid.UUID, 0, len(body.SourceIDs))
 	seenSelected := map[uuid.UUID]bool{}
 	for _, id := range body.SourceIDs {
@@ -294,8 +314,12 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	var runID, configID uuid.UUID
 	var modelID, modelRevision string
 	var modelDimensions int
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id,ec.model_revision,ec.dimensions FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) ORDER BY s.created_at LIMIT 1`, selected).Scan(&runID, &configID, &modelID, &modelRevision, &modelDimensions)
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id,ec.model_revision,ec.dimensions FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) AND (cardinality($2::text[])=0 OR EXISTS(SELECT 1 FROM evidence_categories cat WHERE cat.source_id=s.id AND cat.categories && $2::text[])) ORDER BY s.created_at LIMIT 1`, selected, body.Categories).Scan(&runID, &configID, &modelID, &modelRevision, &modelDimensions)
 	if err != nil {
+		if len(body.Categories) > 0 {
+			fail(w, 409, "No READY passages match the selected literature categories and sources.")
+			return
+		}
 		if len(selected) > 0 {
 			fail(w, 409, "One or more selected sources are not ready. Refresh the source list and choose again.")
 			return
@@ -315,8 +339,15 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	filteredRequest := r.WithContext(context.WithValue(r.Context(), sourceFilterKey{}, selected))
-	if a.answerSourceQuestion(w, filteredRequest, q, mode, runID, configID) {
+	filteredContext := context.WithValue(r.Context(), sourceFilterKey{}, selected)
+	filteredContext = context.WithValue(filteredContext, categoryFilterKey{}, body.Categories)
+	filteredRequest := r.WithContext(filteredContext)
+	if len(body.Categories) == 0 && a.answerSourceQuestion(w, filteredRequest, q, mode, runID, configID) {
+		return
+	}
+	r = filteredRequest
+	if structuredRepertoryQuestion.MatchString(q) {
+		a.insufficientWithFilters(w, r.Context(), q, runID, mode, "Validated rubric membership and grades are not available for these sources. Passage text cannot establish a repertory score or grade.", nil, selected)
 		return
 	}
 	if a.Model == nil {
@@ -388,7 +419,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, scope := range scopes {
-			found, searchErr := a.retrieve(r.Context(), configID, localllm.Vector(vec), query, scope, selected)
+			found, searchErr := a.retrieve(filteredRequest.Context(), configID, localllm.Vector(vec), query, scope, selected)
 			if searchErr != nil {
 				fail(w, 500, "Could not search the prepared books.")
 				return
@@ -546,6 +577,11 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Could not save answer.")
 		return
 	}
+	_, err = tx.Exec(r.Context(), `UPDATE answers SET literature_category_scope=$2,literature_category_snapshot=(SELECT coalesce(jsonb_object_agg(ec.chunk_id,jsonb_build_object('categories',ec.categories,'source_id',ec.source_id,'processing_revision_id',ec.processing_revision_id,'evidence_category',s.evidence_category)),'{}'::jsonb) FROM evidence_categories ec JOIN sources s ON s.id=ec.source_id WHERE ec.chunk_id=ANY($3::uuid[])) WHERE id=$1`, answerID, selectedCategoriesFromContext(r.Context()), ids)
+	if err != nil {
+		fail(w, 500, "Could not save literature category snapshot.")
+		return
+	}
 	for i, check := range claimChecks {
 		ordinal := i + 1
 		if _, err = tx.Exec(r.Context(), `INSERT INTO answer_claims(answer_id,ordinal,claim_text,decision,check_method,verification_prompt_revision,verification_model) VALUES($1,$2,$3,$4,'exact_quote_and_relevance',$5,$6)`, answerID, ordinal, check.Text, check.Decision, claimPromptRevision, a.Model.Config.AnswerModel); err != nil {
@@ -598,7 +634,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Could not save citations.")
 			return
 		}
-		cites = append(cites, map[string]any{"id": cid, "label": label, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan})
+		cites = append(cites, map[string]any{"id": cid, "chunk_id": h.ID, "label": label, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan, "literature_categories": h.Categories, "evidence_category": h.EvidenceCategory, "format": h.Format})
 	}
 	if err = tx.Commit(r.Context()); err != nil {
 		fail(w, 500, "Could not save answer.")
@@ -1394,7 +1430,7 @@ func evidenceCards(hits, cited []hit) []any {
 		if len(preview) > 500 {
 			preview = preview[:500]
 		}
-		out = append(out, map[string]any{"rank": i + 1, "chunk_id": h.ID, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan, "image_url": h.ImageURL, "preview": string(preview), "cited": used[h.ID]})
+		out = append(out, map[string]any{"rank": i + 1, "chunk_id": h.ID, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan, "image_url": h.ImageURL, "literature_categories": h.Categories, "evidence_category": h.EvidenceCategory, "format": h.Format, "preview": string(preview), "cited": used[h.ID]})
 	}
 	return out
 }
@@ -1690,7 +1726,7 @@ func (a *API) insufficientWithChecks(w http.ResponseWriter, ctx context.Context,
 		return
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO answers(id,question,status,answer_text,index_run_id,research_mode,answer_job_id,prompt_revision,owner_role,owner_principal_id) VALUES($1,$2,'insufficient_evidence',$3,$4,$5,$6,$7,$8,$9)`, id, q, reason, run, mode, jobIDFromContext(ctx), answerPromptRevision, answerOwner(ctx), requestPrincipal(ctx).ID); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO answers(id,question,status,answer_text,index_run_id,research_mode,answer_job_id,prompt_revision,owner_role,owner_principal_id,literature_category_scope) VALUES($1,$2,'insufficient_evidence',$3,$4,$5,$6,$7,$8,$9,$10)`, id, q, reason, run, mode, jobIDFromContext(ctx), answerPromptRevision, answerOwner(ctx), requestPrincipal(ctx).ID, selectedCategoriesFromContext(ctx)); err != nil {
 		fail(w, 500, "Could not save research result.")
 		return
 	}
@@ -1779,28 +1815,28 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 	queries := []struct {
 		sql string
 		arg any
-	}{{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id AND ir.embedding_config_id=ce.embedding_config_id JOIN active_indexes ai ON ai.index_run_id=ir.id WHERE ce.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) ORDER BY ce.embedding <=> $2::vector LIMIT 40`, vector}, {`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id JOIN active_indexes ai ON ai.index_run_id=ir.id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex}}
+	}{{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id AND ir.embedding_config_id=ce.embedding_config_id JOIN active_indexes ai ON ai.index_run_id=ir.id WHERE ce.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) ORDER BY ce.embedding <=> $2::vector LIMIT 40`, vector}, {`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id JOIN active_indexes ai ON ai.index_run_id=ir.id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex}}
 	if overviewQuestion(q) {
 		queries = append(queries, struct {
 			sql string
 			arg any
-		}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex})
+		}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex})
 		if strings.Contains(strings.ToLower(q), "result") || strings.Contains(strings.ToLower(q), "finding") || strings.Contains(strings.ToLower(q), "conclusion") {
 			queries = append(queries, struct {
 				sql string
 				arg any
-			}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, "result | conclusion | effect | placebo"})
+			}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, "result | conclusion | effect | placebo"})
 		}
 	}
 	for _, query := range queries {
-		rows, err := a.Store.DB.Query(ctx, query.sql, config, query.arg, scope, selected)
+		rows, err := a.Store.DB.Query(ctx, query.sql, config, query.arg, scope, selected, selectedCategoriesFromContext(ctx))
 		if err != nil {
 			return nil, err
 		}
 		rank := 0
 		for rows.Next() {
 			var h hit
-			if err = rows.Scan(&h.ID, &h.SourceID, &h.Text, &h.Title, &h.Author, &h.Page, &h.Scan, &h.ImageURL); err != nil {
+			if err = rows.Scan(&h.ID, &h.SourceID, &h.Text, &h.Title, &h.Author, &h.Page, &h.Scan, &h.ImageURL, &h.Categories, &h.Format, &h.EvidenceCategory); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -1862,9 +1898,9 @@ func researchPaperTitle(title string) bool {
 
 func (a *API) verifyEvidence(ctx context.Context, hits []hit) error {
 	for _, h := range hits {
-		var exact, raw, storedSHA string
+		var exact, raw, storedSHA, format string
 		var start, end int
-		err := a.Store.DB.QueryRow(ctx, `SELECT c.text_exact,p.text_raw,p.text_sha256,c.start_character,c.end_character FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id WHERE c.id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'`, h.ID).Scan(&exact, &raw, &storedSHA, &start, &end)
+		err := a.Store.DB.QueryRow(ctx, `SELECT c.text_exact,p.text_raw,coalesce(p.text_sha256,''),c.start_character,c.end_character,p.format FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE c.id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'`, h.ID).Scan(&exact, &raw, &storedSHA, &start, &end, &format)
 		if err != nil {
 			return err
 		}
@@ -1873,7 +1909,7 @@ func (a *API) verifyEvidence(ctx context.Context, hits []hit) error {
 			return fmt.Errorf("passage offsets differ from page")
 		}
 		digest := sha256.Sum256([]byte(raw))
-		if hex.EncodeToString(digest[:]) != storedSHA {
+		if format == "pdf" && hex.EncodeToString(digest[:]) != storedSHA {
 			return fmt.Errorf("page checksum differs")
 		}
 	}

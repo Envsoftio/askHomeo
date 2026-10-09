@@ -41,7 +41,7 @@ func (w *Worker) embed(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	if w.Model.Config.EmbeddingProvider != "lmstudio" {
 		batchSize = 16
 	}
-	rows, e := w.Store.DB.Query(ctx, `SELECT c.id,c.text_exact FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800 AND NOT EXISTS(SELECT 1 FROM chunk_embeddings ce WHERE ce.chunk_id=c.id AND ce.embedding_config_id=$2) ORDER BY p.pdf_page_index,c.chunk_index LIMIT $3`, sourceID, configID, batchSize)
+	rows, e := w.Store.DB.Query(ctx, `SELECT c.id,c.text_exact FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800 AND NOT EXISTS(SELECT 1 FROM chunk_embeddings ce WHERE ce.chunk_id=c.id AND ce.embedding_config_id=$2) ORDER BY p.pdf_page_index,c.chunk_index LIMIT $3`, sourceID, configID, batchSize)
 	if e != nil {
 		return e
 	}
@@ -78,11 +78,11 @@ func (w *Worker) embed(ctx context.Context, jobID, sourceID uuid.UUID) error {
 		}
 	}
 	var done, actual int
-	e = w.Store.DB.QueryRow(ctx, `SELECT count(*) FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND ce.embedding_config_id=$2 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, sourceID, configID).Scan(&done)
+	e = w.Store.DB.QueryRow(ctx, `SELECT count(*) FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id WHERE c.source_id=$1 AND ce.embedding_config_id=$2 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, sourceID, configID).Scan(&done)
 	if e != nil {
 		return e
 	}
-	e = w.Store.DB.QueryRow(ctx, `SELECT count(*) FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, sourceID).Scan(&actual)
+	e = w.Store.DB.QueryRow(ctx, `SELECT count(*) FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id WHERE c.source_id=$1 AND p.page_kind='text' AND p.text_qa_status IN ('passed','accepted') AND length(c.text_exact)<=2800`, sourceID).Scan(&actual)
 	if e != nil {
 		return e
 	}

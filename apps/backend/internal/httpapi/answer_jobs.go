@@ -57,9 +57,10 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Question  string      `json:"question"`
-		Mode      string      `json:"mode"`
-		SourceIDs []uuid.UUID `json:"source_ids"`
+		Question   string      `json:"question"`
+		Mode       string      `json:"mode"`
+		SourceIDs  []uuid.UUID `json:"source_ids"`
+		Categories []string    `json:"literature_categories"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input) != nil {
 		fail(w, 400, "Invalid question request.")
@@ -85,6 +86,13 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 	if input.SourceIDs == nil {
 		input.SourceIDs = []uuid.UUID{}
 	}
+	if len(input.Categories) > 0 && !validLiteratureCategories(input.Categories) {
+		fail(w, 400, "choose valid literature categories")
+		return
+	}
+	if input.Categories == nil {
+		input.Categories = []string{}
+	}
 	seen := map[uuid.UUID]bool{}
 	for _, id := range input.SourceIDs {
 		if id == uuid.Nil || seen[id] {
@@ -108,7 +116,7 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO answer_jobs(id,question,question_raw,research_mode,source_ids,status,owner_role,owner_principal_id) VALUES($1,$2,$3,$4,$5,'waiting',$6,$7)`, id, input.Question, rawQuestion, input.Mode, input.SourceIDs, role, requestPrincipal(r.Context()).ID)
+	_, err = tx.Exec(r.Context(), `INSERT INTO answer_jobs(id,question,question_raw,research_mode,source_ids,status,owner_role,owner_principal_id,literature_category_scope) VALUES($1,$2,$3,$4,$5,'waiting',$6,$7,$8)`, id, input.Question, rawQuestion, input.Mode, input.SourceIDs, role, requestPrincipal(r.Context()).ID, input.Categories)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO activity_events(id,answer_job_id,kind,message) VALUES($1,$2,'waiting','Question saved and waiting for research')`, uuid.New(), id)
 	}
@@ -361,7 +369,8 @@ func (a *API) runOneAnswerJob(ctx context.Context) error {
 	var ownerPrincipalID uuid.UUID
 	var question, mode, ownerRole string
 	var sourceIDs []uuid.UUID
-	err := a.Store.DB.QueryRow(ctx, `UPDATE answer_jobs SET status='working',stage='Searching and checking sources',attempts=attempts+1,lease_until=now()+interval '90 seconds',heartbeat_at=now(),updated_at=now() WHERE id=(SELECT id FROM answer_jobs WHERE run_after<=now() AND attempts<3 AND (status IN ('waiting','retrying') OR (status='working' AND lease_until<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,question,research_mode,source_ids,owner_role,owner_principal_id`).Scan(&id, &question, &mode, &sourceIDs, &ownerRole, &ownerPrincipalID)
+	var categories []string
+	err := a.Store.DB.QueryRow(ctx, `UPDATE answer_jobs SET status='working',stage='Searching and checking sources',attempts=attempts+1,lease_until=now()+interval '90 seconds',heartbeat_at=now(),updated_at=now() WHERE id=(SELECT id FROM answer_jobs WHERE run_after<=now() AND attempts<3 AND (status IN ('waiting','retrying') OR (status='working' AND lease_until<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,question,research_mode,source_ids,owner_role,owner_principal_id,literature_category_scope`).Scan(&id, &question, &mode, &sourceIDs, &ownerRole, &ownerPrincipalID, &categories)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -391,7 +400,7 @@ func (a *API) runOneAnswerJob(ctx context.Context) error {
 			}
 		}
 	}()
-	input, _ := json.Marshal(map[string]any{"question": question, "mode": mode, "source_ids": sourceIDs})
+	input, _ := json.Marshal(map[string]any{"question": question, "mode": mode, "source_ids": sourceIDs, "literature_categories": categories})
 	requestCtx := context.WithValue(jobCtx, answerJobKey{}, id)
 	requestCtx = localllm.WithOwner(requestCtx, "answer_job", id.String())
 	requestCtx = context.WithValue(requestCtx, roleKey{}, ownerRole)

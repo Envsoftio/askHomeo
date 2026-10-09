@@ -21,3 +21,14 @@ func TestQuestionTermsKeepLaterResearchTopics(t *testing.T) {
 		t.Fatalf("research terms lost or cluttered: %s", got)
 	}
 }
+
+func TestStructuredRepertoryQuestionsNeedVerifiedGrades(t *testing.T) {
+	for _, q := range []string{"What grade is Arnica under this rubric?", "Score this rubric for the remedies", "Give a repertorization of these symptoms"} {
+		if !structuredRepertoryQuestion.MatchString(q) {
+			t.Fatalf("structured question was missed: %q", q)
+		}
+	}
+	if structuredRepertoryQuestion.MatchString("What does this repertory say about the rubric wording?") {
+		t.Fatal("ordinary passage question was blocked")
+	}
+}

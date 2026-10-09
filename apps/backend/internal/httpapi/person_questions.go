@@ -123,8 +123,8 @@ func (a *API) matchReadyAuthor(ctx context.Context, person string, configID uuid
 
 func (a *API) authorEvidence(ctx context.Context, sourceID uuid.UUID, surname string, configID uuid.UUID) (hit, bool, error) {
 	var h hit
-	err := a.Store.DB.QueryRow(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url
-FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id
+	err := a.Store.DB.QueryRow(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url
+FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id
 JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
 JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id
 WHERE s.id=$1 AND ir.status='ready' AND ir.embedding_config_id=$3 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'

@@ -17,6 +17,9 @@ func TestHTMLExtractionKeepsEvidenceOrderAndRemovesChrome(t *testing.T) {
 	if out.Blocks[0].Key != "chapter" || out.Blocks[0].Text != "Materia Medica" || out.Blocks[1].Text != "First & second." || out.Blocks[4].Text != "Arnica" {
 		t.Fatalf("unexpected block order: %+v", out.Blocks)
 	}
+	if !strings.Contains(strings.Join(out.Warnings, " "), "row and column relationships") {
+		t.Fatalf("table structure limitation was not exposed: %+v", out.Warnings)
+	}
 	for _, block := range out.Blocks {
 		if strings.Contains(block.Text, "Menu") || strings.Contains(block.Text, "secret") || strings.Contains(block.Text, "bad") {
 			t.Fatalf("navigation or active content leaked: %+v", block)
@@ -46,8 +49,23 @@ func TestUncertainEncodingRequiresOverride(t *testing.T) {
 		t.Fatalf("expected encoding guidance, got %v", err)
 	}
 	out, err := Extract(raw, "text/plain", "windows-1252")
-	if err != nil || out.Blocks[0].Text != "Café" || out.Blocks[0].StartByte != -1 {
+	if err != nil || out.Blocks[0].Text != "Café" || out.Blocks[0].StartByte != 0 || out.Blocks[0].EndByte != len(raw) {
 		t.Fatalf("override result: %+v, %v", out, err)
+	}
+}
+
+func TestUTF16OriginalOffsets(t *testing.T) {
+	raw := []byte{0xff, 0xfe, 'A', 0, ' ', 0, 'B', 0, '\n', 0, '\n', 0, 'C', 0}
+	out, err := Extract(raw, "text/plain", "")
+	if err != nil || len(out.Blocks) != 2 || out.Blocks[0].StartByte != 2 || out.Blocks[0].EndByte != 8 || out.Blocks[1].StartByte != 12 {
+		t.Fatalf("UTF-16 offsets: %+v %v", out, err)
+	}
+}
+
+func TestDuplicateHTMLAnchorsGetUniqueSectionKeys(t *testing.T) {
+	out, err := Extract([]byte(`<html><body><p id="repeat">First.</p><p id="repeat">Second.</p></body></html>`), "text/html", "")
+	if err != nil || len(out.Blocks) != 2 || out.Blocks[0].Key != "repeat" || out.Blocks[1].Key != "repeat-2" {
+		t.Fatalf("duplicate anchors: %+v %v", out, err)
 	}
 }
 

@@ -9,6 +9,8 @@ const emit = defineEmits<{open: [source: Source]; add: []}>()
 const search = ref('')
 const filter = ref<LibraryGroup | 'all'>('all')
 const sort = ref('recent')
+const category = ref('all')
+const categories=['materia_medica','repertory','organon_philosophy','therapeutics','provings','clinical_cases','research','other','unclassified']
 const page = ref(1)
 const filters: {id: LibraryGroup | 'all'; label: string}[] = [
   {id: 'all', label: 'All sources'}, {id: 'attention', label: 'Needs attention'},
@@ -18,7 +20,7 @@ const filters: {id: LibraryGroup | 'all'; label: string}[] = [
 const count = (id: string) => props.sources.filter(s => id === 'all' || s.group === id).length
 const filtered = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
-  const rows = props.sources.filter(s => (filter.value === 'all' || s.group === filter.value)
+  const rows = props.sources.filter(s => (filter.value === 'all' || s.group === filter.value) && (category.value==='all'||s.literature_categories.includes(category.value))
     && (!query || `${s.title} ${s.author}`.toLocaleLowerCase().includes(query)))
   if (sort.value === 'title') rows.sort((a,b) => a.title.localeCompare(b.title))
   if (sort.value === 'author') rows.sort((a,b) => a.author.localeCompare(b.author))
@@ -26,9 +28,9 @@ const filtered = computed(() => {
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / 12)))
 const visible = computed(() => filtered.value.slice((page.value - 1) * 12, page.value * 12))
-watch([search, filter, sort], () => {page.value = 1})
+watch([search, filter, sort,category], () => {page.value = 1})
 watch(pageCount, total => {page.value = Math.min(page.value, total)})
-function reset() {search.value = ''; filter.value = 'all'}
+function reset() {search.value = ''; filter.value = 'all';category.value='all'}
 </script>
 
 <template>
@@ -39,6 +41,7 @@ function reset() {search.value = ''; filter.value = 'all'}
     </div>
     <div class="library-toolbar">
       <label class="library-search">Search library<input v-model="search" type="search" placeholder="Search by title or author" /></label>
+      <label>Literature<select v-model="category"><option value="all">All categories</option><option v-for="value in categories" :key="value" :value="value">{{value.replaceAll('_',' ')}}</option></select></label>
       <label>Sort by<select v-model="sort"><option value="recent">Recently added</option><option value="title">Title A–Z</option><option value="author">Author A–Z</option></select></label>
     </div>
     <p v-if="sources.length>=50" class="listing-limit">Showing the 50 most recently added sources. Search and status filters apply to this list.</p>
@@ -48,7 +51,7 @@ function reset() {search.value = ''; filter.value = 'all'}
     <template v-else>
       <div class="library-columns" aria-hidden="true"><span>Document</span><span>Status</span><span>Next step</span></div>
       <button v-for="source in visible" :key="source.id" class="library-row" @click="emit('open',source)">
-        <span class="document-info"><span class="document-icon" aria-hidden="true">▤</span><span><strong>{{source.title}}</strong><small>{{source.author||'Author not recorded'}}<template v-if="source.pages_total"> · {{source.pages_total}} pages</template></small><small v-if="source.supersedes_source_id">Reprocessed edition</small></span></span>
+        <span class="document-info"><span class="document-icon" aria-hidden="true">▤</span><span><strong>{{source.title}}</strong><small>{{source.author||'Author not recorded'}} · {{source.document_format.toUpperCase()}}<template v-if="source.document_format==='pdf'&&source.pages_total"> · {{source.pages_total}} pages</template></small><small>{{source.literature_categories.join(', ').replaceAll('_',' ')}} · {{source.evidence_category.replaceAll('_',' ')}}</small><small v-if="source.supersedes_source_id">Reprocessed edition</small></span></span>
         <span class="document-status"><span class="status-badge" :class="source.group">{{source.state}}</span><progress v-if="source.status==='processing'&&source.pages_total" :value="source.pages_read" :max="source.pages_total" :aria-label="`${source.title}: pages read`" /></span>
         <span class="row-action">{{source.group==='attention'?'Review source':source.group==='processing'?'View progress':'View source'}} <span aria-hidden="true">↗</span></span>
       </button>

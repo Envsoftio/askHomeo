@@ -26,10 +26,18 @@ type readySource struct {
 	Repository  string
 }
 type sourceFilterKey struct{}
+type categoryFilterKey struct{}
 
 func selectedSourcesFromContext(ctx context.Context) []uuid.UUID {
 	selected, _ := ctx.Value(sourceFilterKey{}).([]uuid.UUID)
 	return selected
+}
+func selectedCategoriesFromContext(ctx context.Context) []string {
+	values, _ := ctx.Value(categoryFilterKey{}).([]string)
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func (a *API) answerSourceQuestion(w http.ResponseWriter, r *http.Request, question, mode string, runID, configID uuid.UUID) bool {
@@ -116,8 +124,8 @@ func (a *API) answerSourceQuestion(w http.ResponseWriter, r *http.Request, quest
 }
 
 func (a *API) findDefinition(ctx context.Context, term string, configID uuid.UUID) (hit, string, error) {
-	rows, err := a.Store.DB.Query(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url
-FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id
+	rows, err := a.Store.DB.Query(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url
+FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id
 JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
 JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id
 WHERE ir.status='ready' AND ir.embedding_config_id=$2 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'
@@ -228,8 +236,8 @@ func (a *API) matchReadySource(ctx context.Context, question string, configID uu
 }
 
 func (a *API) openingEvidence(ctx context.Context, sourceID uuid.UUID) ([]hit, error) {
-	rows, err := a.Store.DB.Query(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),p.scan_page_index+1,p.image_url
-FROM chunks c JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id WHERE c.source_id=$1 AND p.page_kind='text'
+	rows, err := a.Store.DB.Query(ctx, `SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url
+FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE c.source_id=$1 AND p.page_kind='text'
 ORDER BY CASE WHEN p.scan_page_index<30 AND (left(p.text_raw,160) ~* '(preface|introduction|abstract)') THEN 0 ELSE 1 END,p.scan_page_index,c.start_character LIMIT 3`, sourceID)
 	if err != nil {
 		return nil, err
