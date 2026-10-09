@@ -24,7 +24,7 @@ if ! "${compose[@]}" up -d --remove-orphans --wait --wait-timeout 180; then
   logs="$("${compose[@]}" logs --no-color --tail 40 api db 2>&1 || true)"
   while IFS='=' read -r key value || [[ -n "$key" ]]; do
     case "$key" in
-      POSTGRES_PASSWORD|API_TOKEN|REVIEWER_TOKEN|OPENROUTER_API_KEY|DEEPINFRA_API_KEY|CHAT_API_KEY|EMBEDDING_API_KEY|AUTH_PRINCIPALS_JSON)
+      POSTGRES_PASSWORD|ADMIN_PASSWORD|API_TOKEN|REVIEWER_TOKEN|OPENROUTER_API_KEY|DEEPINFRA_API_KEY|CHAT_API_KEY|EMBEDDING_API_KEY|AUTH_PRINCIPALS_JSON)
         value="${value%$'\r'}"
         value="${value#\"}"
         value="${value%\"}"

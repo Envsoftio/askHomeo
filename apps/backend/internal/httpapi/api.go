@@ -25,13 +25,16 @@ import (
 )
 
 type API struct {
-	Store         *core.Store
-	Token         string
-	ReviewerToken string
-	Principals    []Principal
-	Model         *localllm.Client
-	DOI           *doi.Client
-	Archive       *archive.Client
+	Store             *core.Store
+	Token             string
+	ReviewerToken     string
+	Principals        []Principal
+	Model             *localllm.Client
+	DOI               *doi.Client
+	Archive           *archive.Client
+	adminUsername     string
+	adminPassword     string
+	adminSessionToken string
 }
 type roleKey struct{}
 

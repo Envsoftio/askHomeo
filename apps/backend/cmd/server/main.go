@@ -64,9 +64,6 @@ func main() {
 		log.Fatal("mode must be api or worker")
 	}
 	token := httpapi.Token()
-	if len(token) < 24 {
-		log.Fatal("API_TOKEN must have at least 24 characters")
-	}
 	addr := os.Getenv("API_ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -76,6 +73,9 @@ func main() {
 		if err = json.Unmarshal([]byte(raw), &api.Principals); err != nil {
 			log.Fatalf("AUTH_PRINCIPALS_JSON: %v", err)
 		}
+	}
+	if err = api.ConfigureAdminLogin(os.Getenv("ADMIN_USERNAME"), os.Getenv("ADMIN_PASSWORD")); err != nil {
+		log.Fatalf("configure administrator login: %v", err)
 	}
 	if err = api.SyncPrincipals(ctx); err != nil {
 		log.Fatalf("configure principals: %v", err)

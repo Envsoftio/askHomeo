@@ -29,7 +29,9 @@ services:
       dockerfile: apps/backend/Dockerfile
     environment:
       DATABASE_URL: postgres://homeopath:${POSTGRES_PASSWORD:-localdev}@db:5432/homeopath?sslmode=disable
-      API_TOKEN: ${API_TOKEN:?Set API_TOKEN in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      API_TOKEN: ${API_TOKEN:-}
       REVIEWER_TOKEN: ${REVIEWER_TOKEN:-}
       ADMIN_NAME: ${ADMIN_NAME:-Local administrator}
       REVIEWER_NAME: ${REVIEWER_NAME:-Local reviewer}

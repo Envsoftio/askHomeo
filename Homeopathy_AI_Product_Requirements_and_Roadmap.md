@@ -1,11 +1,12 @@
 # Homeopathy AI — Product Requirements and Development Direction
 
-Date: 2026-10-08  
+Date: 2026-10-09
+
 Status: Consolidated product requirements, scope assessment, source catalogue, competitor review, public website requirements, and task-ready roadmap. India-first launch and all seven product modules are confirmed direction; sequencing, collection targets, pricing, and release dates remain proposals unless explicitly identified otherwise. No future feature is marked implemented by this document.
 
 ## 1. Purpose and document authority
 
-Capture the product discussion through 2026-10-08, including the seven-module scope audit, India-first launch decision, international ambition, 56-source collection catalogue, hosted production models with pluggable development inference, and inherited POC UX. Preserve the existing clarification that **a patient case is optional**. Future work must support both general knowledge questions and a later structured case workflow using a shared, source-grounded knowledge foundation.
+Capture the product discussion through 2026-10-09, including the seven-module scope audit, India-first launch decision, international ambition, 56-source collection catalogue, hosted production models with pluggable development inference, inherited POC UX, launch workflows, and the GLM-first research/citation quality direction. Preserve the existing clarification that **a patient case is optional**. Future work must support both general knowledge questions and a later structured case workflow using a shared, source-grounded knowledge foundation.
 
 Read this document alongside:
 
@@ -31,6 +32,10 @@ Latest technical discussion: [UI-to-AI-search design](#31-technical-direction-fr
 Latest confirmed development decisions: [stack, authentication, naming and task delivery](#33-confirmed-stack-authentication-and-development-conventions). Section 33 confirms shadcn-vue and Go-based Authboss, optional Google login, Handlebars email templates, and the user's preference for a simple first launch, concrete names, complete feature tasks and focused verification. It supersedes earlier descriptions of the UI library as undecided and the proposed Better Auth Node.js service.
 
 Launch decisions updated 2026-10-09: [public registration, ZeptoMail, research completion and admin analytics](#34-launch-access-background-research-and-admin-analytics). Research must continue after the user leaves, persist its result and send an answer-ready email. Private user uploads are future scope.
+
+Research decisions updated 2026-10-09: [GLM-first hosted inference, ingestion, retrieval, citation verification and evaluation](#35-glm-first-research-and-citation-quality). GLM is the confirmed first model family; provider selection, tuning values and quality targets below are implementation recommendations, not measured results or an activated deployment.
+
+**Current delivery priority — confirmed 2026-10-09:** [Research core first](#36-research-core-first--confirmed-delivery-priority). Establish and validate ingestion, retrieval and trustworthy cited answers before expanding other product areas. Section 36 takes precedence over earlier delivery sequences; evaluation starts with the core, and broad source ingestion follows validation on a representative corpus.
 
 ## 2. Product understanding
 
@@ -177,7 +182,7 @@ Systematic-review assistance must retain search strategies, databases, dates, sc
 
 Preserve the established Vue 3 + TypeScript frontend, Go backend, PostgreSQL with full-text search and pgvector, and separate API/worker processes. Continue the modular-monolith direction; these product areas do not by themselves justify separate microservices.
 
-Current README configuration allows chat and embedding providers to vary independently, including hosted providers. Treat older local-only model examples as historical configuration context. Do not hard-code a model, provider, API key, or embedding dimension into the product requirements.
+Current README configuration allows chat and embedding providers to vary independently, including hosted providers. Treat older local-only model examples as historical configuration context. Keep model, provider and embedding dimensions configurable and credentials server-side; the dated initial model choice in section 35 does not make the product dependent on that model.
 
 The following are proposed logical boundaries, not final service or table definitions:
 
@@ -1692,3 +1697,195 @@ Use shared shadcn-vue patterns for page layout, validation, loading/empty/error 
 Deliver this as concrete features such as: submit and reopen background research; recover interrupted research; receive answer-ready email; inspect a query's evidence and cost; filter admin usage/cost charts. Each task includes its necessary UI, API, storage and worker changes. Avoid one oversized “robust pipeline and analytics” ticket.
 
 Focused acceptance should exercise: leave/close the browser after submission and return to the saved answer; restart a worker mid-run; repeat the same submission; fail a provider call; delay/fail email while the answer remains available; verify user isolation; and reconcile recorded calls/costs with an example run. Reuse existing checks and provide concise manual steps rather than generating broad test suites. This documentation update performs none of these runtime checks and changes no application code.
+
+## 35. GLM-first research and citation quality
+
+Decision and verification date: 2026-10-09. This section records the source-ingestion, RAG, evaluation, model-quality and cost discussion, followed by a fresh read-only code review and official provider-documentation check. No live answer benchmark or deployed-database inspection was performed. This update changes the roadmap only; it does not switch environment settings or certify model quality.
+
+### 35.1 Confirmed choices and recommendation status
+
+| Item | Decision/status |
+|---|---|
+| First answer model family | **Confirmed: use GLM first.** This supersedes the earlier recommendation to start with OpenAI or DeepSeek. |
+| Deployment approach | **Confirmed: hosted open-weight API**, with low upfront cost; self-hosting is not an initial requirement. |
+| Working model version | GLM-5.3, the GLM version discussed, is the implementation target proposed here. The user selected GLM; no exact serving revision or provider has been activated. |
+| Hosting recommendation | Evaluate DeepInfra `zai-org/GLM-5.3` first because a DeepInfra adapter already exists; keep hosting configurable. An OpenRouter route remains an alternative, with its own pricing and parameter mapping. |
+| Traffic and budget | Unknown. The user has not approved a recurring budget or the previously suggested $20–$50 experiment allowance. Use explicit usage limits and measured costs. |
+| Retrieval models | Retain the current BGE-M3 embedding baseline initially. Evaluate a hosted open-weight reranker, starting with Qwen3-Reranker-8B; BGE-reranker-v2-m3 is another candidate. These are proposals, not installed components. |
+| Other answer models discussed | Nemotron, DeepSeek and Qwen remain optional comparison candidates. Proprietary models may be benchmark references, but are not dependencies for this GLM-first direction. |
+
+Open weights and hosted inference are separate choices: weights can be available while API execution is paid and provider-managed. Public reasoning/coding benchmarks do not establish accuracy on this corpus. Select the serving model/configuration by supported-answer quality, useful coverage, abstention, latency and cost per accepted answer.
+
+### 35.2 Reverified implementation and material gaps
+
+| Area | Observed in code | Improvement needed |
+|---|---|---|
+| Ingestion | Page extraction/OCR, QA, immutable text/checksums and publication gates exist. `savePage` creates approximately 700-character chunks without overlap. | Preserve headings, sentences, tables and cross-page context; keep original citation spans immutable. |
+| Indexing | Approved text is embedded; indexing/count queries exclude chunks longer than 2,800 characters. | Reconcile every eligibility/count query when changing chunking. A token-size change must not silently omit long passages. |
+| Retrieval | Vector search plus PostgreSQL full-text search (`ts_rank_cd`, not BM25), rank fusion with constant 60; main branches return up to 40 results, then up to 24 per search and 10 final passages. | Add reranking and question-specific evidence coverage; retain the existing hybrid foundation. |
+| Diversity | Candidate and final-selection source quotas exist. | Apply author/source balancing to requested comparisons; do not let irrelevant sources displace stronger evidence merely to balance counts. |
+| Drafting | Evidence-first JSON; initial draft capped at 4 claims in quick mode or 8 in deep mode; prompt requests 4–12-word quotes. | Let bounded claim/quote budgets reflect question complexity. Short quotes can omit conditions, negation or study qualifications. |
+| Verification | Quote extraction, exact stored spans, relevance/support checks, checksums and citation resolution exist. Generation and verification use the same model client. | Preserve deterministic checks; strengthen context-aware entailment and independently reviewed evaluation. Another call to the same model is not independent validation. |
+| Completeness | Main answer path marks `partial` when claims were omitted; otherwise a valid answer can be `answered`. | Track requested aspects explicitly. Zero rejected claims does not prove that every requested aspect was answered. |
+| Presentation | Deep-mode section bodies reuse verified sentences rather than freely rewriting them. | Preserve this property; any future prose rewrite or factual heading must also be checked. |
+| Metrics | Admin report derives candidate/citation/claim counts and timings from saved records. `citation_coverage` is cited chunks divided by selected candidates. | Rename/describe it as evidence usage; add real evaluation labels and stage-specific metrics. |
+| Retrieval history | Final evidence candidates/scores and search counts are saved; the whole pre-selection candidate pool is not persisted by the main answer path. | Save bounded per-stage candidate IDs/ranks and the evidence actually sent to generation so failures can be diagnosed. |
+| Model calls | Client returns answer text and discards provider usage; sends a generic `reasoning` object; no provider-enforced output schema is requested. | Add provider-aware parameters, response validation, observable model identity and usage/cost capture. |
+| Evaluation | Runner/scorer exist, but referenced `evaluation/` directory is absent. Existing release scripts expect exactly 30 cases. | Restore the reviewed baseline first; expand/version the runner and dataset together rather than assuming a 100-case file already works. |
+
+Code references: [ingestion](apps/backend/internal/ingest/worker.go), [embedding eligibility](apps/backend/internal/ingest/embed.go), [retrieval and answers](apps/backend/internal/httpapi/research.go), [draft claims](apps/backend/internal/httpapi/evidence_claims.go), [section rendering](apps/backend/internal/httpapi/research_sections.go), [citation resolution](apps/backend/internal/httpapi/api.go), [specialized source answers](apps/backend/internal/httpapi/source_questions.go), [evaluation report](apps/backend/internal/httpapi/answer_evaluation.go), [provider client](apps/backend/internal/localllm/client.go), [evaluation runner](scripts/evaluate_poc.py), [release scorer](scripts/score_evaluation.py).
+
+### 35.3 Recommended evidence workflow
+
+Use the existing Go/PostgreSQL/pgvector foundation and durable jobs. Prioritize an inspectable, bounded research pipeline; a new vector database, graph database, fine-tuning programme or autonomous multi-agent research system is not a prerequisite.
+
+```text
+Eligible source revision
+  → extraction/OCR and page review
+  → exact citation text plus separate normalized search text
+  → structure-aware passages and versioned index
+
+Question and explicit source constraints
+  → requested aspects and bounded search plan
+  → lexical/vector retrieval
+  → deduplicate and rerank
+  → attach relevant heading/neighbor context with original span mappings
+  → GLM builds claims and evidence records
+  → deterministic citation checks plus contextual support checks
+  → assess requested-aspect coverage and contradictions
+  → persist checked answer, limitations, evidence, usage and result status
+```
+
+**Ingestion and research context:**
+
+- Preserve document, edition, acquisition, asset, processing revision and page identity. Retain printed page labels separately from PDF/scan positions. Original OCR is an immutable transcription, not proof of perfect recognition.
+- Build normalized search text separately: whitespace/dehyphenation and reviewed spelling/remedy aliases should improve matching without changing quotations. Preserve an explicit mapping back to original spans.
+- Detect chapter/remedy headings for books and abstract/methods/results/discussion/table/footnote structure for papers. Context from a preceding page must carry its own page/span identity; never cite a synthetic merged passage as one original page.
+- First test heading/neighbor expansion around existing chunks, then compare structural rechunking in a separate index revision. This allows useful context improvements without immediately invalidating all existing citations or benchmark chunk IDs.
+- Compare OCR with manually checked samples, including difficult scans, remedy names, negations and numbers. Existing OCR-to-OCR agreement is a diagnostic, not measured character/word accuracy.
+- Keep evidence type and scope explicit: historical descriptions, published cases, trials, reviews and guidelines. Track correction/retraction state and linked reports of the same study. Duplicate reports do not count as independent corroboration.
+
+**Retrieval and grounded answering:**
+
+- Classify lookup, comparison, document summary and evidence-review requests; preserve source/edition restrictions through every branch, including specialized metadata/person answers.
+- Use the original query and only necessary focused expansions. An abbreviation, negation, preparation or author constraint must not disappear during rewriting.
+- Rerank before the current narrow per-search selection discards potentially useful evidence. Record lexical, vector, fusion and reranker scores separately; none is a calibrated probability of truth.
+- For whole-document summaries, cover relevant sections rather than assuming the top few query matches summarize the work. For a study, retain population, preparation/intervention, comparator, outcomes, numerical results and limitations when present. Unknown fields stay unknown.
+- Keep exact quotations long enough to support the complete claim and its qualifications. Verify the claim against the cited paragraph/section context as well as the excerpt. A matching quote may still misrepresent the source.
+- Build comparison/evidence-table cells from checked claims. Preserve conflicting findings with attribution; do not force a consensus or convert historical usage into an efficacy conclusion.
+- Render bibliographies and exports from trusted stored metadata. The model chooses evidence identifiers; it must not invent authors, titles, editions, DOIs or page numbers. Metadata-only records must remain distinguishable from passage evidence.
+- Store coverage per requested aspect as supported, conflicting or missing. Return a useful partial answer with explicit gaps; return insufficient evidence when the corpus cannot support an answer. Bound any additional search/retry attempt.
+- Recheck eligibility before saving and when opening evidence. Keep authorized historical citation resolution across reindexing, and preserve disablement/access restrictions. Treat retrieved document instructions as untrusted content in every model stage.
+
+### 35.4 GLM integration and proposed tuning
+
+The [official GLM-5.3 model card](https://huggingface.co/zai-org/GLM-5.3) documents `low`, `high` and `max` reasoning levels. [DeepInfra's integration guidance](https://deepinfra.com/blog/glm-5-3-deepinfra) confirms top-level `reasoning_effort`, always-on reasoning, text-only input and a default of `max`. Therefore the existing `CHAT_REASONING_EFFORT=none` and generic `reasoning: {effort: ...}` payload must not be assumed compatible. GLM answers from extracted text; it does not replace OCR for scanned pages.
+
+Before activation, verify the selected endpoint's parameter contract, JSON handling, finish reasons and usage fields with a small representative request. Use strict JSON schema where supported; otherwise JSON mode plus backend schema validation. JSON validity alone does not establish factual support. Retain model-provided reasoning token counts where available, not hidden reasoning text. A manually assigned revision string does not pin remote weights; record actual provider/model/revision/quantization when exposed and mark unknown values explicitly.
+
+| Setting | Proposed starting experiment, not an established optimum |
+|---|---|
+| GLM effort | Explicit `low` initially; compare `high` on difficult comparisons/support checks. Do not default every stage to `max`. |
+| Output budget | Separate reasoning/completion allowance from desired visible-answer length; measure truncation before choosing stage caps. The current 4,096-token cap is not validated for GLM. |
+| Structural chunks | Approximately 300–500 tokens where structure permits; 50–80-token overlap only when splitting a section. Keep exact offsets and reconcile the 2,800-character index guard. |
+| Retrieval | Start with the current 40 results per lexical/vector branch; test 60 only if labeled recall improves. Keep RRF constant 60 initially. |
+| Reranking | Compare the top 40–60 deduplicated candidates; choose a bounded evidence set after reranking. |
+| Evidence budget | Start around 8–12 passages and 6,000–10,000 total evidence tokens, including expansion; tune by question type. |
+| Search expansion | Original query for simple lookup; up to two focused additions for complex questions. |
+| Relevance/abstention thresholds | Calibrate on reviewed questions for the selected model and corpus; do not use an arbitrary universal similarity cutoff. |
+| Runtime controls | Stage deadlines, one total job time/cost budget, bounded transient retries and persisted completed stages, extending section 34. |
+
+Changing the chat model alone does not require re-embedding. Changing embedding model/input format/dimensions or chunk structure requires an explicitly versioned compatible index and preserved citation lineage. Keep the API and workers on the same relevant configuration.
+
+### 35.5 Precision, recall and release evidence
+
+**Do not report true precision/recall for every new live question without reference labels.** Precision@k is relevant retrieved items divided by k; recall@k is retrieved gold-relevant items divided by all gold-relevant items for the defined corpus and scope. Define behavior when fewer than k items exist and avoid counting overlapping duplicates as independent evidence. Reference sets are reviewed judgments, not automatically exhaustive truth.
+
+| Measurement | Required interpretation |
+|---|---|
+| Precision@k, recall@k, nDCG@k | Labeled retrieval evaluation; measure candidate retrieval separately from final evidence selection. |
+| Citation integrity | Identifier/page/revision/checksum/span resolution; deterministic integrity checks. |
+| Citation correctness | Whether the cited passage supports the complete associated claim in context; independently reviewed or explicitly marked model-estimated. |
+| Claim citation coverage | Supported, properly cited source-derived claims divided by all substantive source-derived claims, including any displayed table cells or summaries. |
+| Answer completeness | Covered expected/requested points, with contradictions and missing evidence retained. |
+| Abstention | Test both unsupported answers on unanswerable questions and unnecessary abstentions on answerable questions. |
+| Operations | Whole-answer and stage latency, failures, truncation, retries, total usage/cost and cost per accepted answer. |
+
+Store unevaluated reference metrics as null/not evaluated. Keep human labels, model-estimated judgments and deterministic checks separate, with evaluator/model/prompt/dataset versions. User thumbs-up/down is useful feedback, not gold relevance. Do not compare the current specialized-path score of `1` with ordinary RRF scores as if they shared a confidence scale.
+
+Restore the existing 30-case evaluation contract, then grow to a versioned 50–100-question set spanning direct lookup, multiple authors/editions, study summaries, tables/numbers, OCR errors, conflicts, source restrictions, unsupported questions and document prompt injection. Keep a held-out subset unused for tuning. Gold evidence should retain source revision/page spans so that rechunking can be mapped or deliberately relabeled rather than creating misleading recall changes.
+
+First compare models on identical evidence to isolate generation/support quality; separately compare retrieval/chunking/reranking with a fixed generator. Use blinded human review of representative outputs; a second model can assist review but is not ground truth. Record the endpoint/quantization as part of the tested configuration.
+
+The existing scorer contains gates of recall@10 ≥ 0.90, human claim support ≥ 0.95, expected-point coverage ≥ 0.90, citation integrity and safe handling of unsupported cases. These are inherited POC thresholds, **not achieved scores or proof of clinical reliability**. Extend the benchmark and its category reporting before revising thresholds. Report sample size and failures; a small passing set is not a universal accuracy guarantee.
+
+### 35.6 Cost discussion and accounting basis
+
+Pricing was checked on 2026-10-09. [DeepInfra GLM-5.3](https://deepinfra.com/zai-org/GLM-5.3) lists regular input/output rates of $0.90/$4.00 per million tokens and promotional rates of $0.563/$2.50. Budget with regular rates; promotions, route, quantization and cache terms can change.
+
+Illustrative GLM cost, summing **all** drafting, verification, planning and retry calls per question:
+
+| Assumed total billable tokens per question | Cost per question at regular rates | 1,000 questions | 10,000 questions |
+|---|---:|---:|---:|
+| 20,000 input + 3,000 output | $0.03 | $30 | $300 |
+| 60,000 input + 12,000 output | $0.102 | $102 | $1,020 |
+
+These are arithmetic scenarios, not observed consumption. Output includes billable reasoning within the assumed total; a short visible answer can still incur more tokens. Costs exclude embeddings, reranking, OCR, infrastructure, taxes and payment/platform fees. The earlier comparison at the first token budget estimated $58/10,000 questions for [DeepSeek V4.1 Flash](https://deepinfra.com/deepseek-ai/DeepSeek-V4.1-Flash), $115 for [Qwen3.8-27B](https://deepinfra.com/Qwen/Qwen3.8-27B), and $166 for the listed [Nemotron paid route](https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b), using non-promotional rates where shown. These alternatives remain comparison context, not a reversal of the GLM choice.
+
+Implement section 34.4 accounting before making cost claims: provider request IDs, usage categories without double-counting reasoning, price basis/currency, uncertain or failed attempts, and totals per stage/run. Missing usage is unknown, not zero. Set explicit request/job/user budgets; the user's uncertain traffic does not authorize unlimited spending.
+
+### 35.7 Recommended delivery order
+
+The feature outcomes below remain relevant, but **section 36 supersedes their ordering**: establish the reviewed baseline first; GLM integration can proceed alongside ingestion improvements. Refine each outcome into an implementation task under section 33; reuse existing records and add storage only when justified.
+
+| Priority | Feature outcome | Focused acceptance |
+|---|---|---|
+| 1 | Ask and inspect a GLM answer with correct provider parameters and usage | Selected hosted endpoint receives supported parameters; valid checked answer or clear failure; actual usage and unknown fields visible; embedding index unchanged. |
+| 2 | Establish a reviewed research baseline | Restore the 30-case assets/runner, label evidence and expected points, then version an expanded held-out set; publish actual failures and costs. |
+| 3 | Read a passage with its heading and relevant surrounding context | Existing and expanded evidence retains original page/span mappings; old citations still resolve; OCR/source uncertainty remains visible. |
+| 4 | Retrieve stronger evidence for lookups and comparisons | Reranking before narrow selection; bounded candidate traces; improved held-out relevance/coverage without violating source scope. |
+| 5 | See complete, qualified research findings | Contextual claim support and requested-aspect coverage; missing/conflicting aspects shown; study numbers, qualifiers and author attribution survive. |
+| 6 | Reuse verified citations and monitor quality | Bibliography export from stored metadata; source revision/eligibility checks; admin views of human/model/deterministic quality measures and cost per accepted answer. |
+
+Recommended initial system: **hosted GLM + existing BGE-M3/lexical search + evaluated open-weight reranking + source-context expansion + exact citation validation + reviewed evaluation**. Improve these measurable foundations before adding more elaborate research automation. Public literature discovery and systematic-review workflows remain separate roadmap features; prepared-corpus RAG must not imply an exhaustive search of published evidence.
+
+## 36. Research core first — confirmed delivery priority
+
+Decision date: 2026-10-09. The user confirmed that **source ingestion, RAG and reliable source-grounded answering are the highest priority across this PRD**. Complete and validate the research core before expanding other product areas. This changes delivery order, not the long-term seven-module scope or the earlier product-owner closure of the POC implementation milestone. The remaining core quality gaps are active next work.
+
+### 36.1 First milestone and work order
+
+Milestone: **Research core — trustworthy ingestion, retrieval and cited answers.** Evaluation is part of this milestone from the beginning, not a final reporting task.
+
+| Order | Work | Observable outcome |
+|---|---|---|
+| 1 | Establish the measurable baseline | Restore the existing evaluation assets/contract, review gold evidence and expected answer points, and record current retrieval, citation and answer failures. Inspect representative ingestion failures before choosing fixes. |
+| 2 | Improve source ingestion | Preserve text, headings, tables, editions, original page/span mappings and QA decisions; uncertain OCR remains visible for review. Test context expansion before structural rechunking where appropriate. |
+| 3 | Improve retrieval | Evaluate hybrid search, heading/neighbor context and reranking against the baseline; preserve source restrictions and measure relevance and coverage. |
+| 4 | Integrate hosted GLM correctly | Supported provider parameters, validated structured responses, token usage, costs and bounded failures. This work can begin alongside ingestion improvements after capturing the baseline. |
+| 5 | Strengthen answer verification | Claims follow from cited context; comparisons preserve attribution; requested aspects are covered or explicitly marked missing/conflicting. |
+| 6 | Validate the full research workflow | Import → review → publish → READY index → retrieve → answer → open original citation → reopen saved answer, with measured quality, latency and cost. |
+
+Preserve the existing Go/PostgreSQL/pgvector foundation, publication gates, exact citations, access controls and durable jobs. Improve working components rather than replacing them without evidence. The GLM-first choice in section 35 remains confirmed; tuning and reranker choices remain experiments until evaluated.
+
+### 36.2 Representative corpus before broad ingestion
+
+Start with a small, appropriately usable corpus containing a clean book, a difficult scanned book, and research papers with tables, numerical findings and qualifications. Select actual documents and record their revisions when implementing the baseline; this is not a claim that such fixtures already exist.
+
+Use it to exercise direct lookup, author/source comparisons, OCR errors, missing evidence and conflicting findings. Retain a held-out evaluation subset as specified in section 35.5. Expand ingestion only after the pipeline preserves evidence and shows measured usefulness on these cases.
+
+This qualifies section 32's day-one collection direction: source discovery, rights assessment and catalogue planning may continue across all seven modules, but bulk ingestion and module-specific processing expansion must not displace core validation. Source-count targets are not completion criteria for this milestone.
+
+### 36.3 Work deferred until the core milestone is validated
+
+Defer new public website work, account lifecycle features, email notifications, advanced dashboards, patient-case analysis and other product-module expansion. Their requirements remain in the roadmap; they are not cancelled.
+
+Retain and improve only the supporting functionality necessary to operate and inspect the core: existing authorization, durable source/answer jobs, minimal source-review and citation screens, saved-answer access, per-call usage/cost records and a basic evaluation report. A broad UI redesign or analytics dashboard is not needed to measure the core. Existing source/access protections must continue to apply.
+
+### 36.4 Milestone completion and immediate next task
+
+Completion requires a reviewed, versioned evaluation report showing retrieval quality, citation integrity/support, answer completeness, appropriate abstention, latency and cost, with failures and sample sizes visible. Apply the inherited gates in section 35.5 and explicitly resolve material gaps; a working demo or a model swap alone does not establish completion.
+
+Also demonstrate the full workflow in section 36.1, including original-page citation resolution and reopening a saved answer without regenerating it. Preserve earlier citation lineage through ingestion/index changes and confirm source restrictions remain enforced. Use focused existing checks and concise manual acceptance steps under section 33.6.
+
+**Immediate next implementation task:** restore the evaluation baseline and inspect representative ingestion failures, producing a concrete failure list that drives ingestion and retrieval changes. This documentation update records priority only; it does not execute that task, activate GLM, approve a spending budget or mark the milestone complete.

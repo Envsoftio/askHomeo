@@ -66,17 +66,18 @@ type IndexStatus={status:string,model:string,completed:number,total:number,error
 const index=ref<IndexStatus|null>(null),indexBySource=ref<Record<string,IndexStatus>>({})
 const connectionError=ref(''),actionError=ref(''),busy=ref(false)
 const session=ref<{name:string,role:string}|null>(null),sessionLoading=ref(true),accessToken=ref(''),signInError=ref(''),signingIn=ref(false),requiredRole=ref<''|'admin'>('')
+const username=ref(''),password=ref(''),loginMode=ref<'admin'|'reviewer'>('admin')
 let authVersion=0
 async function signIn(){
  signingIn.value=true;signInError.value=''
- try{session.value=await api<{name:string,role:string}>('/session',{method:'POST',body:JSON.stringify({token:accessToken.value,required_role:requiredRole.value})});authVersion++;accessToken.value='';requiredRole.value='';reconcileNow()}
- catch(e){accessToken.value='';signInError.value=e instanceof Error?e.message:'Could not sign in.'}
+ try{session.value=await api<{name:string,role:string}>('/session',{method:'POST',body:JSON.stringify(loginMode.value==='admin'?{username:username.value,password:password.value,required_role:'admin'}:{token:accessToken.value,required_role:requiredRole.value})});authVersion++;password.value='';accessToken.value='';requiredRole.value='';reconcileNow()}
+ catch(e){password.value='';accessToken.value='';signInError.value=e instanceof Error?e.message:'Could not sign in.'}
  finally{signingIn.value=false}
 }
 async function signOut(){
  try{await api('/session',{method:'DELETE'})}catch{actionError.value='Could not sign out. Check the service and try again.';return}
  authVersion++
- session.value=null;requiredRole.value='';sources.value=[];answerJobs.value=[];sourceJobs.value=[];answer.value='';citation.value=null;actionError.value='';connectionError.value='';currentJobID.value=''
+ session.value=null;requiredRole.value='';loginMode.value='admin';password.value='';accessToken.value='';sources.value=[];answerJobs.value=[];sourceJobs.value=[];answer.value='';citation.value=null;actionError.value='';connectionError.value='';currentJobID.value=''
  window.clearTimeout(timer);window.clearTimeout(activityTimer)
 }
 async function switchToAdmin(){
@@ -285,7 +286,17 @@ onUnmounted(()=>{
 <template>
  <main class="shell">
   <section v-if="sessionLoading" class="step"><h1>Opening source research</h1><p>Checking your session…</p></section>
-  <form v-else-if="!session" class="step" @submit.prevent="signIn"><h1>{{requiredRole==='admin'?'Sign in as administrator':'Sign in'}}</h1><p v-if="requiredRole==='admin'">Enter <code>API_TOKEN</code> from the local <code>.env</code> file. <code>REVIEWER_TOKEN</code> cannot open the source catalog search.</p><p v-else>Enter your administrator or reviewer access token from the local <code>.env</code> file. Use <code>API_TOKEN</code> for administrator access and <code>REVIEWER_TOKEN</code> for reviewer access. Your work and Activity are recorded under your name.</p><label>Access token <input v-model="accessToken" type="password" autocomplete="current-password" required /></label><button :disabled="signingIn||!accessToken.trim()">{{signingIn?'Signing in…':'Sign in'}}</button><p v-if="signInError" class="error" role="alert">{{signInError}}</p></form>
+  <form v-else-if="!session" class="step" @submit.prevent="signIn">
+   <h1>{{loginMode==='admin'?'Sign in as administrator':'Sign in as reviewer'}}</h1>
+   <template v-if="loginMode==='admin'">
+    <label>Username <input v-model="username" name="username" type="text" autocomplete="username" required /></label>
+    <label>Password <input v-model="password" name="password" type="password" autocomplete="current-password" required /></label>
+   </template>
+   <label v-else>Reviewer access token <input v-model="accessToken" name="token" type="password" autocomplete="current-password" required /></label>
+   <button :disabled="signingIn||(loginMode==='admin'?(!username.trim()||!password):!accessToken.trim())">{{signingIn?'Signing in…':'Sign in'}}</button>
+   <button v-if="requiredRole!=='admin'" type="button" :disabled="signingIn" @click="loginMode=loginMode==='admin'?'reviewer':'admin';password='';accessToken='';signInError=''">{{loginMode==='admin'?'Sign in as reviewer':'Sign in as administrator'}}</button>
+   <p v-if="signInError" class="error" role="alert">{{signInError}}</p>
+  </form>
   <template v-else>
   <header><strong>Source research</strong><nav aria-label="Main"><button :class="{selected:tab==='ask'}" @click="openAskTab">Ask</button><button :class="{selected:tab==='sources'}" @click="tab='sources'">Sources</button><button :class="{selected:tab==='review'}" @click="tab='review'">Review</button><button :class="{selected:tab==='activity'}" @click="openActivityTab">Activity <span v-if="runningActivity||attentionActivity||unreadActivity">({{runningActivity}} working · {{attentionActivity}} need attention<span v-if="unreadActivity"> · {{unreadActivity}} new</span>)</span></button><span>{{session.name}} ({{session.role}})</span><button @click="signOut">Sign out</button></nav></header>
   <p v-if="connectionError" class="error" role="alert">{{connectionError}} <button @click="refresh">Try again</button></p>
@@ -294,7 +305,7 @@ onUnmounted(()=>{
   <section v-if="tab==='sources'">
    <div class="sectionhead"><div><h1>Your sources</h1><p>Find a book in the source catalog, add a paper by DOI, import a PDF link, or upload a PDF. Each source needs page checks, a rights decision, and passage preparation.</p></div></div>
    <form v-if="session.role==='admin'" class="step" @submit.prevent="searchArchive(1)"><h2>Search source catalog</h2><p>Search Internet Archive by title or author. Inspect its catalogue record and PDF before downloading. Every imported book still needs page and rights review.</p><label>Book title or author <input v-model="archiveQuery" minlength="3" maxlength="120" placeholder="Boericke or Organon of Medicine" /></label><button :disabled="busy||archiveQuery.trim().length<3">Search books</button></form>
-   <div v-else class="step"><h2>Search source catalog</h2><p>Book search requires administrator access. You are signed in as {{session.name}} ({{session.role}}). Sign in with <code>API_TOKEN</code> from <code>.env</code> to search and add sources.</p><button @click="switchToAdmin">Switch to administrator</button></div>
+   <div v-else class="step"><h2>Search source catalog</h2><p>Book search requires administrator access. You are signed in as {{session.name}} ({{session.role}}). Sign in with your administrator username and password to search and add sources.</p><button @click="switchToAdmin">Switch to administrator</button></div>
    <div v-if="session.role==='admin'&&(archiveResults.length||archiveTotal)" class="step"><h3>Internet Archive results</h3><p>{{archiveTotal}} matching records. Choose a record to see its available PDFs.</p><div class="archive-results"><article v-for="work in archiveResults" :key="work.identifier"><strong>{{work.title||work.identifier}}</strong><p>{{work.creator||'Author not listed'}} · {{work.year||'Year unknown'}}</p><p><a :href="work.record_url" target="_blank" rel="noreferrer">Open catalogue record</a> <button :disabled="busy" @click="inspectArchive(work.identifier)">View PDFs</button></p></article></div><div class="actions"><button :disabled="busy||archivePage<=1" @click="searchArchive(archivePage-1)">Previous</button><span>Page {{archivePage}}</span><button :disabled="busy||archivePage*12>=archiveTotal" @click="searchArchive(archivePage+1)">Next</button></div></div>
    <div v-if="session.role==='admin'&&archiveItem" id="archive-item" class="step"><h3>{{archiveItem.title||archiveItem.identifier}}</h3><p>{{archiveItem.creator||'Author not listed'}} · {{archiveItem.publication_info||archiveItem.year||'Date unknown'}}</p><p><a :href="archiveItem.record_url" target="_blank" rel="noreferrer">Review catalogue record</a></p><p>Recorded rights: {{archiveItem.rights||'No rights statement supplied; check the catalogue record before publishing.'}} <a v-if="archiveItem.license_url" :href="archiveItem.license_url" target="_blank" rel="noreferrer">Licence</a></p><p v-if="!archiveItem.pdfs.length">No public PDF under 250 MB was listed for this item. Try another record or use a permitted PDF link.</p><div v-for="file in archiveItem.pdfs" :key="file.url" class="archive-file"><span>{{file.name}} · {{(file.bytes/1048576).toFixed(1)}} MB · {{file.source||'PDF'}}</span><button :disabled="busy" @click="importArchivePDF(file)">Download for review</button></div></div>
    <p v-if="archiveNotice" class="good" role="status">{{archiveNotice}}</p>

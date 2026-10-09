@@ -14,16 +14,30 @@ func setSessionCookie(w http.ResponseWriter, token string) {
 
 func (a *API) openSession(w http.ResponseWriter, r *http.Request) {
 	var input struct {
+		Username     string `json:"username"`
+		Password     string `json:"password"`
 		Token        string `json:"token"`
 		RequiredRole string `json:"required_role"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&input); err != nil {
-		fail(w, http.StatusBadRequest, "enter an access token")
+		fail(w, http.StatusBadRequest, "enter valid sign-in details")
 		return
 	}
-	principal, ok := a.authenticate(strings.TrimSpace(input.Token))
+	var principal Principal
+	var ok bool
+	if input.Token != "" && input.Username == "" && input.Password == "" {
+		principal, ok = a.authenticate(strings.TrimSpace(input.Token))
+		// Administrator browser sign-in always requires username and password.
+		ok = ok && principal.Role == "reviewer"
+	} else if input.Token == "" && a.adminSessionToken != "" {
+		usernameMatches := credentialsEqual(strings.TrimSpace(input.Username), a.adminUsername)
+		passwordMatches := credentialsEqual(input.Password, a.adminPassword)
+		if usernameMatches && passwordMatches {
+			principal, ok = a.adminSessionPrincipal()
+		}
+	}
 	if !ok {
-		fail(w, http.StatusUnauthorized, "access token was not recognized")
+		fail(w, http.StatusUnauthorized, "sign-in details were not recognized")
 		return
 	}
 	if input.RequiredRole != "" && input.RequiredRole != "admin" && input.RequiredRole != "reviewer" {
@@ -31,7 +45,7 @@ func (a *API) openSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.RequiredRole != "" && principal.Role != input.RequiredRole {
-		fail(w, http.StatusForbidden, "This token grants "+principal.Role+" access. Enter the administrator API_TOKEN from .env to switch to administrator.")
+		fail(w, http.StatusForbidden, "This account grants "+principal.Role+" access. Sign in with the administrator username and password to switch to administrator.")
 		return
 	}
 	setSessionCookie(w, principal.Token)

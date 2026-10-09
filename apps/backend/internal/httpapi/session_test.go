@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,110 @@ import (
 
 	"github.com/google/uuid"
 )
+
+func TestAdminPasswordSession(t *testing.T) {
+	for _, named := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "named reviewers"}[named], func(t *testing.T) {
+			api := &API{}
+			if named {
+				api.Token = "unused-default-admin-token-123456"
+				api.Principals = []Principal{{ID: uuid.New(), Name: "Reviewer", Role: "reviewer", Token: "named-reviewer-secret-token"}}
+			}
+			if err := api.ConfigureAdminLogin("admin@example.com", "test-password"); err != nil {
+				t.Fatal(err)
+			}
+			if named {
+				if _, ok := api.authenticate(api.Token); ok {
+					t.Fatal("named users must continue to replace the default bearer token")
+				}
+			}
+			h := api.Handler()
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/session", strings.NewReader(`{"username":"admin@example.com","password":"test-password"}`)))
+			cookies := w.Result().Cookies()
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"role":"admin"`) || len(cookies) != 1 {
+				t.Fatalf("login status=%d body=%s", w.Code, w.Body.String())
+			}
+			cookie := cookies[0]
+			if !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.Value == "test-password" || len(cookie.Value) < 32 {
+				t.Fatal("expected an opaque HttpOnly session cookie")
+			}
+			principal, ok := api.authenticate(cookie.Value)
+			if !ok || principal.ID != legacyAdminID {
+				t.Fatal("administrator identity must be preserved")
+			}
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+			req.AddCookie(cookie)
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].Value != cookie.Value {
+				t.Fatal("administrator session should survive and renew on subsequent requests")
+			}
+			req = httptest.NewRequest(http.MethodDelete, "/api/v1/session", nil)
+			req.AddCookie(cookie)
+			w = httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusOK || len(w.Result().Cookies()) != 1 || w.Result().Cookies()[0].MaxAge >= 0 {
+				t.Fatal("sign out must clear the administrator cookie")
+			}
+			if err := api.ConfigureAdminLogin("admin@example.com", "new-password"); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := api.authenticate(cookie.Value); ok {
+				t.Fatal("old administrator session should expire after reconfiguration")
+			}
+		})
+	}
+}
+
+func TestAdminLoginRejectsInvalidCredentialsAndTokens(t *testing.T) {
+	api := &API{Token: "admin-local-demo-token-123456"}
+	if err := api.ConfigureAdminLogin("admin@example.com", "test-password"); err != nil {
+		t.Fatal(err)
+	}
+	h := api.Handler()
+	for _, body := range []map[string]string{
+		{},
+		{"username": "admin@example.com"},
+		{"password": "test-password"},
+		{"username": "wrong@example.com", "password": "test-password"},
+		{"username": "admin@example.com", "password": "wrong-password"},
+		{"username": "admin@example.com", "password": "test-password "},
+		{"token": api.Token},
+		{"token": api.adminSessionToken},
+		{"username": "admin@example.com", "password": "test-password", "token": api.Token},
+	} {
+		payload, _ := json.Marshal(body)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewReader(payload)))
+		if w.Code != http.StatusUnauthorized || len(w.Result().Cookies()) != 0 {
+			t.Fatalf("invalid credentials accepted: status=%d", w.Code)
+		}
+	}
+	// Existing automation can still authenticate using an explicitly configured bearer token.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/session", nil)
+	req.Header.Set("Authorization", "Bearer "+api.Token)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bearer API access status=%d", w.Code)
+	}
+}
+
+func TestAdminLoginConfiguration(t *testing.T) {
+	for _, credentials := range [][2]string{{"", ""}, {"admin", ""}, {"", "password"}, {"admin", "   "}} {
+		if err := (&API{}).ConfigureAdminLogin(credentials[0], credentials[1]); err == nil {
+			t.Fatal("missing administrator credentials must fail startup")
+		}
+	}
+	if err := (&API{Token: "short"}).ConfigureAdminLogin("admin", "password"); err == nil {
+		t.Fatal("short optional API token must fail startup")
+	}
+	api := &API{Principals: []Principal{{ID: legacyAdminID, Role: "reviewer"}}}
+	if err := api.ConfigureAdminLogin("admin", "password"); err == nil {
+		t.Fatal("reviewer cannot use the reserved administrator identity")
+	}
+}
 
 func TestBrowserSessionUsesNamedPrincipal(t *testing.T) {
 	principal := Principal{ID: uuid.New(), Name: "Reviewer Alpha", Role: "reviewer", Token: "reviewer-alpha-local-demo-token"}
@@ -49,6 +154,9 @@ func TestBrowserSessionUsesNamedPrincipal(t *testing.T) {
 
 func TestAdministratorSwitchRejectsReviewerToken(t *testing.T) {
 	api := &API{Token: "admin-local-demo-token-123456", ReviewerToken: "reviewer-local-demo-token-123456"}
+	if err := api.ConfigureAdminLogin("admin@example.com", "test-password"); err != nil {
+		t.Fatal(err)
+	}
 	h := api.Handler()
 	wrong := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewBufferString(`{"token":"reviewer-local-demo-token-123456","required_role":"admin"}`))
 	w := httptest.NewRecorder()
@@ -56,7 +164,7 @@ func TestAdministratorSwitchRejectsReviewerToken(t *testing.T) {
 	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "reviewer access") || len(w.Result().Cookies()) != 0 {
 		t.Fatalf("reviewer switch status=%d body=%s cookies=%v", w.Code, w.Body.String(), w.Result().Cookies())
 	}
-	correct := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewBufferString(`{"token":"admin-local-demo-token-123456","required_role":"admin"}`))
+	correct := httptest.NewRequest(http.MethodPost, "/api/v1/session", bytes.NewBufferString(`{"username":"admin@example.com","password":"test-password","required_role":"admin"}`))
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, correct)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"role":"admin"`) || len(w.Result().Cookies()) != 1 {
