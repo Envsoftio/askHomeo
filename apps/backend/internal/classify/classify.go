@@ -2,12 +2,15 @@ package classify
 
 import (
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
 
-const Version = "literature-rules-v1"
+const Version = "literature-rules-v3"
+
+var rubricSeparator = regexp.MustCompile(`\s+(?:--|—|:)\s*`)
 
 type Evidence struct {
 	Category string `json:"category"`
@@ -55,6 +58,51 @@ func SuggestWithThreshold(content string, threshold int) Suggestion {
 				scores[category]++
 				evidence = append(evidence, Evidence{category, cue})
 			}
+		}
+	}
+	// Layout-independent signals complement vocabulary. A title alone is not
+	// enough: repeated label/list rows or numbered case narratives are required.
+	rubricRows := 0
+	for _, row := range strings.Split(content, "\n") {
+		// Legacy repertories commonly use "rubric : remedy, remedy" rather
+		// than a dash. Require several list rows before trusting the shape.
+		parts := rubricSeparator.Split(strings.TrimSpace(row), 2)
+		if len(parts) != 2 || len(parts[0]) < 3 || len(parts[0]) > 120 {
+			continue
+		}
+		items := strings.Split(parts[1], ",")
+		shortNames := 0
+		for _, item := range items {
+			item = strings.TrimSpace(item)
+			if len(item) > 0 && len(item) <= 28 && len(strings.Fields(item)) <= 4 && strings.Contains(item, ".") {
+				shortNames++
+			}
+		}
+		if shortNames >= 3 {
+			rubricRows++
+		}
+	}
+	if rubricRows >= 3 {
+		scores["repertory"] += 2
+		evidence = append(evidence, Evidence{"repertory", "repeated labeled rows with abbreviated remedy lists"}, Evidence{"repertory", "multiple distinct list entries in document content"})
+		// Modalities occur in repertories too; those shared terms alone do not
+		// establish a separate materia medica section.
+		if !strings.Contains(text, "materia medica") && !strings.Contains(text, "remedy picture") && !strings.Contains(text, "leading symptoms") {
+			delete(scores, "materia_medica")
+		}
+	}
+	if len(regexp.MustCompile(`(?i)\bcase\s+[0-9]+\b`).FindAllString(content, -1)) >= 2 {
+		scores["clinical_cases"]++
+		evidence = append(evidence, Evidence{"clinical_cases", "multiple numbered cases"})
+		narrative := 0
+		for _, cue := range []string{"patient", "called to", "prescribed", "recovery", "aged", "suffering"} {
+			if strings.Contains(text, cue) {
+				narrative++
+			}
+		}
+		if narrative >= 2 {
+			scores["clinical_cases"]++
+			evidence = append(evidence, Evidence{"clinical_cases", "patient and treatment narrative within numbered cases"})
 		}
 	}
 	chosen := []string{}

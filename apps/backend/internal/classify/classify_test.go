@@ -33,3 +33,23 @@ func TestConfigurableCueThreshold(t *testing.T) {
 		t.Fatalf("configured threshold: %+v", got)
 	}
 }
+
+func TestGenericStructuralClassification(t *testing.T) {
+	repertory := Suggest("Cold -- Abc., Def., Ghi.\nHeat -- Jkl., Mno., Pqr.\nMotion -- Stu., Vwx., Yza.\nAggravation and amelioration are modalities.")
+	if !reflect.DeepEqual(repertory.Categories, []string{"repertory"}) {
+		t.Fatalf("missed structure or confused modalities: %+v", repertory)
+	}
+	colonRows := Suggest("ABRUPT : Nat-m., tarent., Bell.\nABSENT-MINDED : Acon., act-sp., agar., alum.\nMorning : Guai., nat-c., ph-ac., phos.")
+	if !reflect.DeepEqual(colonRows.Categories, []string{"repertory"}) {
+		t.Fatalf("missed colon-delimited rubric lists: %+v", colonRows)
+	}
+	cases := Suggest("Case 1\nThe patient was aged forty and recovered.\nCase 2\nCalled to a patient suffering at night.")
+	if !reflect.DeepEqual(cases.Categories, []string{"clinical_cases"}) {
+		t.Fatalf("missed numbered narratives: %+v", cases)
+	}
+	for _, text := range []string{"Case 1 * Case 2 * Case 3", "A -- apples, oranges, pears\nB -- fruit, berries, nuts\nC -- red, blue, green", "Cold -- Abc., Def., Ghi."} {
+		if got := Suggest(text); got.State != "uncertain" {
+			t.Fatalf("overconfident: %+v", got)
+		}
+	}
+}

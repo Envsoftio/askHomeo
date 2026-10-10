@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/charset"
+	"homeopath-poc/backend/internal/classify"
 	"homeopath-poc/backend/internal/document"
 	"homeopath-poc/backend/internal/safefetch"
 )
@@ -39,21 +40,24 @@ type Scope struct {
 }
 
 type Entry struct {
-	URL         string   `json:"url"`
-	FinalURL    string   `json:"final_url,omitempty"`
-	Depth       int      `json:"depth"`
-	State       string   `json:"state"`
-	Role        string   `json:"role,omitempty"`
-	Format      string   `json:"format,omitempty"`
-	ContentType string   `json:"content_type,omitempty"`
-	ByteSize    int      `json:"byte_size,omitempty"`
-	SHA256      string   `json:"sha256,omitempty"`
-	BlockCount  int      `json:"block_count,omitempty"`
-	Charset     string   `json:"charset,omitempty"`
-	Sample      string   `json:"sample,omitempty"`
-	Anchors     []string `json:"anchors,omitempty"`
-	Warnings    []string `json:"warnings,omitempty"`
-	Error       string   `json:"error,omitempty"`
+	ExcludedBlocks       int      `json:"excluded_blocks,omitempty"`
+	SuggestedCategories  []string `json:"suggested_categories,omitempty"`
+	ClassificationReason string   `json:"classification_reason,omitempty"`
+	URL                  string   `json:"url"`
+	FinalURL             string   `json:"final_url,omitempty"`
+	Depth                int      `json:"depth"`
+	State                string   `json:"state"`
+	Role                 string   `json:"role,omitempty"`
+	Format               string   `json:"format,omitempty"`
+	ContentType          string   `json:"content_type,omitempty"`
+	ByteSize             int      `json:"byte_size,omitempty"`
+	SHA256               string   `json:"sha256,omitempty"`
+	BlockCount           int      `json:"block_count,omitempty"`
+	Charset              string   `json:"charset,omitempty"`
+	Sample               string   `json:"sample,omitempty"`
+	Anchors              []string `json:"anchors,omitempty"`
+	Warnings             []string `json:"warnings,omitempty"`
+	Error                string   `json:"error,omitempty"`
 }
 
 type Link struct {
@@ -240,6 +244,7 @@ previewLoop:
 		}
 		entry.Format = inspected.Format
 		entry.Charset, entry.Sample = inspected.Charset, inspected.Sample
+		entry.ExcludedBlocks, entry.SuggestedCategories, entry.ClassificationReason = inspected.ExcludedBlocks, inspected.SuggestedCategories, inspected.ClassificationReason
 		entry.State = "fetched"
 		entry.BlockCount, entry.Warnings, entry.Role, entry.Anchors = inspected.BlockCount, inspected.Warnings, inspected.Role, inspected.Anchors
 		if entry.Format == "html" {
@@ -317,9 +322,20 @@ func Inspect(data []byte, contentType, finalURL string) (Entry, []Link, error) {
 	entry := Entry{Format: format, Role: "unresolved", Warnings: []string{}}
 	noText := false
 	if extracted, extractionErr := document.Extract(data, contentType, ""); extractionErr == nil {
-		entry.BlockCount = len(extracted.Blocks)
+		suggestion := classify.Suggest(document.EvidenceText(extracted.Blocks))
+		entry.SuggestedCategories, entry.ClassificationReason = suggestion.Categories, suggestion.Reason
+		for _, block := range extracted.Blocks {
+			if block.ExclusionReason != "" {
+				entry.ExcludedBlocks++
+			} else {
+				entry.BlockCount++
+			}
+		}
 		entry.Charset = extracted.Charset
 		for _, block := range extracted.Blocks {
+			if block.ExclusionReason != "" {
+				continue
+			}
 			if entry.Sample != "" {
 				entry.Sample += "\n"
 			}
@@ -331,6 +347,10 @@ func Inspect(data []byte, contentType, finalURL string) (Entry, []Link, error) {
 		}
 		entry.Warnings = append(entry.Warnings, extracted.Warnings...)
 		entry.Role = "content_candidate"
+		if entry.BlockCount == 0 {
+			noText = true
+			entry.Role = "unresolved"
+		}
 	} else {
 		noText = strings.Contains(extractionErr.Error(), "document has no substantive text")
 		entry.Warnings = append(entry.Warnings, "No reviewable text was extracted: "+extractionErr.Error())

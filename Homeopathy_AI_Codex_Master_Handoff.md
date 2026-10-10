@@ -15,6 +15,8 @@
 
 **Linked-book planning update — 2026-10-10:** Follow roadmap sections 42.5–42.9, POC PRD 64.1 and [ING-06 A–F](tasks/ING-06.md#ordered-implementation-slices--2026-10-10). Public inspection found 33 Boericke repertory pages and 27 Nash casebook pages with 100 numbered cases. This is not application acceptance. Required next work includes durable multi-asset collection beyond the current 30-page preview, categorical italic notation with cited convention, full rubric ancestry/cross-references, historical case chronology/mention roles, exact saved-original review and non-PDF/structured evaluation. Retain the existing schema/preview progress; adapters, integrated retrieval and measured release gates remain open. No prescribing or perfection guarantee is introduced.
 
+**Generic ingestion clarification — 2026-10-10:** User rejected per-book ingestion implementations. Follow roadmap 42.10/PRD 64.2: shared structural/format recognizers, content-driven automatic categories, uncertainty and review. Generic HTML cleaning/context preservation and audited automatic draft categories (migration 042) are implemented and tested, including disposable database ingestion/indexing fixtures. Named books are regression datasets only. Verified repertory grades/membership and held-out answer quality remain open; no universal/perfect support is claimed.
+
 ---
 
 # 1. How to use this file

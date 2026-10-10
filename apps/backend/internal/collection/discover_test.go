@@ -180,3 +180,11 @@ func TestPreviewDiscoversContinuationAfterManyAnchorLinks(t *testing.T) {
 		t.Fatalf("lost continuation beyond repeated links: %+v %v", m, err)
 	}
 }
+
+func TestNavigationOnlyIndexDoesNotBecomeEvidence(t *testing.T) {
+	raw := []byte(`<html><p><a href="a">Alpha</a></p><p><a href="b">Beta</a></p><p><a href="c">Gamma</a></p><p><a href="d">Delta</a></p><p><a href="e">Epsilon</a></p></html>`)
+	e, links, err := Inspect(raw, "text/html", "https://books.example/index.htm")
+	if err != nil || e.Role != "index_only" || e.BlockCount != 0 || e.ExcludedBlocks != 5 || e.Sample != "" || len(links) != 5 {
+		t.Fatalf("navigation became evidence: %+v links=%d err=%v", e, len(links), err)
+	}
+}

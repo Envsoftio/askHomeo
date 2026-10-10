@@ -131,7 +131,7 @@ func (a *API) documentBlocks(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "reviewer access required")
 		return
 	}
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT b.id,b.block_index,b.section_key,b.kind,b.heading,b.original_text,b.reviewed_text,b.start_byte,b.end_byte,b.review_status,b.review_note,b.warnings,coalesce(sc.categories,s.literature_categories),sc.id IS NOT NULL FROM document_blocks b JOIN sources s ON s.id=b.source_id LEFT JOIN literature_section_categories sc ON sc.document_block_id=b.id WHERE b.source_id=$1 AND b.processing_revision_id=s.current_revision_id ORDER BY b.block_index`, id)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT b.id,b.block_index,b.section_key,b.kind,b.heading,b.original_text,b.reviewed_text,b.start_byte,b.end_byte,b.review_status,b.review_note,b.warnings,coalesce(sc.categories,s.literature_categories),sc.id IS NOT NULL FROM document_blocks b JOIN sources s ON s.id=b.source_id LEFT JOIN literature_section_categories sc ON sc.document_block_id=b.id WHERE b.source_id=$1 AND s.removed_at IS NULL AND b.processing_revision_id=s.current_revision_id ORDER BY b.block_index`, id)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return

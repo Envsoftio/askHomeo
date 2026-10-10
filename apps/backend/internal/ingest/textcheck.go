@@ -1,24 +1,16 @@
 package ingest
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"image"
-	"image/draw"
-	"image/png"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
+	"homeopath-poc/backend/internal/pdfocr"
 )
 
-var qaWords = regexp.MustCompile(`[a-z]{4,}`)
+var qaWords = regexp.MustCompile(`[\p{L}\p{N}]+`)
 
 type textCheck struct {
 	suspect  bool
@@ -27,6 +19,9 @@ type textCheck struct {
 }
 
 func comparePageText(stored, fresh string) textCheck {
+	if reason := pdfocr.SuspiciousText(stored); reason != "" {
+		return textCheck{true, reason, 0}
+	}
 	oldWords := qaWords.FindAllString(strings.ToLower(stored), -1)
 	newWords := qaWords.FindAllString(strings.ToLower(fresh), -1)
 	if len(newWords) < 40 {
@@ -57,8 +52,11 @@ func comparePageText(stored, fresh string) textCheck {
 	if len(oldWords)*4 < len(newWords)*3 {
 		return textCheck{true, "The stored text is substantially shorter than a fresh OCR pass; check for missing lines.", coverage}
 	}
-	if coverage < 0.78 {
-		return textCheck{true, fmt.Sprintf("Fresh OCR and stored text differ substantially (%.0f%% word agreement); check this scan.", coverage*100), coverage}
+	if coverage < 1 || len(oldWords) != len(newWords) {
+		return textCheck{true, fmt.Sprintf("Fresh OCR and stored text differ (%.0f%% word agreement); check this scan.", coverage*100), coverage}
+	}
+	if strings.Join(oldWords, " ") != strings.Join(newWords, " ") {
+		return textCheck{true, "Fresh OCR and stored text have different word order; check the scan for misplaced lines.", coverage}
 	}
 	if openingWindows < 2 {
 		return textCheck{true, "The opening lines may be missing or out of order in stored text; compare the top of this scan.", coverage}
@@ -69,78 +67,8 @@ func comparePageText(stored, fresh string) textCheck {
 	return textCheck{false, fmt.Sprintf("Fresh OCR agreed with stored text (%.0f%% word agreement).", coverage*100), coverage}
 }
 
-func freshOCR(ctx context.Context, pdf string, pdfPageIndex int) (string, error) {
-	if pdfPageIndex < 0 {
-		return "", fmt.Errorf("invalid PDF page %d", pdfPageIndex)
-	}
-	dir, err := os.MkdirTemp("", "text-check-*")
-	if err != nil {
-		return "", fmt.Errorf("create OCR workspace: %w", err)
-	}
-	defer os.RemoveAll(dir)
-	image := filepath.Join(dir, "scan.png")
-	page := strconv.Itoa(pdfPageIndex + 1)
-	renderCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(renderCtx, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r150", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+image, "-f", pdf)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("render PDF page %s: %w: %s", page, err, bytes.TrimSpace(out))
-	}
-	info, err := os.Stat(image)
-	if err != nil {
-		return "", fmt.Errorf("rendered scan missing: %w", err)
-	}
-	if info.Size() > 32<<20 {
-		return "", fmt.Errorf("rendered scan %s is too large", page)
-	}
-	ocrCtx, stop := context.WithTimeout(ctx, 25*time.Second)
-	defer stop()
-	cmd = exec.CommandContext(ocrCtx, "tesseract", image, "stdout", "-l", "eng", "--psm", "3")
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("OCR PDF page %s: %w: %s", page, err, strings.TrimSpace(stderr.String()))
-	}
-	if len(out) > 1<<20 {
-		return "", fmt.Errorf("OCR text for page %s is too large", page)
-	}
-	if len(qaWords.FindAllString(strings.ToLower(string(out)), -1)) < 40 {
-		cropPath := filepath.Join(dir, "center.png")
-		if err := cropCenter(image, cropPath); err == nil {
-			cropCmd := exec.CommandContext(ocrCtx, "tesseract", cropPath, "stdout", "-l", "eng", "--psm", "3")
-			cropCmd.Stderr = &stderr
-			if cropped, cropErr := cropCmd.Output(); cropErr == nil && len(cropped) <= 1<<20 && len(qaWords.FindAllString(strings.ToLower(string(cropped)), -1)) > len(qaWords.FindAllString(strings.ToLower(string(out)), -1)) {
-				out = cropped
-			}
-		}
-	}
-	return string(out), nil
-}
-
-func cropCenter(input, output string) error {
-	f, err := os.Open(input)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	src, err := png.Decode(f)
-	if err != nil {
-		return err
-	}
-	b := src.Bounds()
-	if b.Dx() < 200 || b.Dy() < 200 {
-		return fmt.Errorf("scan too small to crop")
-	}
-	r := image.Rect(b.Min.X+b.Dx()*12/100, b.Min.Y+b.Dy()*7/100, b.Min.X+b.Dx()*88/100, b.Min.Y+b.Dy()*93/100)
-	dst := image.NewRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	draw.Draw(dst, dst.Bounds(), src, r.Min, draw.Src)
-	out, err := os.Create(output)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	return png.Encode(out, dst)
+func freshOCR(ctx context.Context, pdf string, index int) (string, error) {
+	return pdfocr.Read(ctx, pdf, index)
 }
 
 func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error {
@@ -177,15 +105,20 @@ func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error
 		return err
 	}
 	for _, p := range pages {
-		fresh, err := freshOCR(ctx, pdf, p.index)
-		if err != nil {
-			return fmt.Errorf("check scan %d: %w", p.index, err)
+		fresh, warning, err := pdfocr.Check(ctx, pdf, p.index)
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		result := comparePageText(p.text, fresh)
+		if err != nil {
+			result = textCheck{true, "OCR could not verify this scan. Retry OCR or correct the text against the image.", 0}
+		} else if warning != "" {
+			result = textCheck{true, warning, 0}
+		}
 		_, err = w.Store.DB.Exec(ctx, `UPDATE pages SET text_qa_at=now(),text_qa_reason=$2,
- text_qa_status=CASE WHEN $3 AND review_status='reviewed' THEN 'accepted' WHEN $3 THEN 'suspect' ELSE 'passed' END,
- review_status=CASE WHEN $3 AND review_status<>'reviewed' THEN 'needs_review' WHEN NOT $3 AND review_status='needs_review' THEN 'auto_checked' ELSE review_status END
- WHERE id=$1 AND text_qa_at IS NULL`, p.id, result.reason, result.suspect)
+ text_qa_status=CASE WHEN $3 THEN 'suspect' ELSE 'passed' END,
+ review_status=CASE WHEN $3 THEN 'needs_review' WHEN NOT $3 AND review_status='needs_review' THEN 'auto_checked' ELSE review_status END
+ WHERE id=$1 AND text_qa_at IS NULL AND text_raw=$4 AND page_kind='text'`, p.id, result.reason, result.suspect, p.text)
 		if err != nil {
 			return fmt.Errorf("save text check for scan %d: %w", p.index, err)
 		}

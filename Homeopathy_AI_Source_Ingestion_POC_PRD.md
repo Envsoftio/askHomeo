@@ -2715,4 +2715,8 @@ The confirmed cross-format requirements are specified in [product roadmap sectio
 
 The 2026-10-10 inspection fetched public pages and checked links; it did not establish reuse rights, production import, model quality or end-to-end application support. Requirements completion must not be reported as implementation completion.
 
+## 64.2 Generic ingestion clarification — 2026-10-10
+
+Roadmap 42.10 qualifies named-book adapter wording: implement shared format/layout recognizers and content-based category detection; named sources are validation fixtures, not hardcoded intake paths. Retain uncertain/manual fallback and exact evidence gates. Generic HTML filtering, heading/anchor/line-break preservation, source title extraction and automatic draft category prefilling are implemented; migration 042 distinguishes detected category decisions from human acceptance. Existing sources need explicit reimport/review to adopt changed extraction; never rewrite saved evidence or silently reclassify published sources. Structured rubric/grade correctness and live-model RAG evaluation remain open.
+
 # END OF POC PRD

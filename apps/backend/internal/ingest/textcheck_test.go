@@ -58,3 +58,12 @@ func TestFreshOCRFarringtonMarginFallback(t *testing.T) {
 		t.Fatalf("crop fallback missed Farrington's text: %.120s", text)
 	}
 }
+
+func TestComparePageTextFlagsSingleWrongWord(t *testing.T) {
+	clean := "every other work on Materia Medica " + strings.Repeat("patient remedy symptoms motion pain fever cough treatment joints swelling ", 10)
+	for _, broken := range []string{strings.Replace(clean, "Medica", "Mcdica", 1), strings.Replace(clean, "work", "w(U'k", 1), strings.Replace(clean, "on", "no", 1)} {
+		if got := comparePageText(broken, clean); !got.suspect {
+			t.Fatalf("single wrong word passed: %+v", got)
+		}
+	}
+}

@@ -140,7 +140,7 @@ func (a *API) retryLiteratureClassification(w http.ResponseWriter, r *http.Reque
 	if format == "pdf" {
 		err = a.Store.DB.QueryRow(r.Context(), `SELECT coalesce(string_agg(text_raw,E'\n' ORDER BY pdf_page_index),'') FROM (SELECT text_raw,pdf_page_index FROM pages WHERE source_id=$1 AND page_kind='text' ORDER BY pdf_page_index LIMIT 30) p`, id).Scan(&content)
 	} else {
-		err = a.Store.DB.QueryRow(r.Context(), `SELECT coalesce(string_agg(heading||E'\n'||original_text,E'\n' ORDER BY block_index),'') FROM document_blocks WHERE processing_revision_id=$1`, revisionID).Scan(&content)
+		err = a.Store.DB.QueryRow(r.Context(), `SELECT coalesce(string_agg(heading||E'\n'||reviewed_text,E'\n' ORDER BY block_index),'') FROM document_blocks WHERE processing_revision_id=$1 AND review_status<>'excluded'`, revisionID).Scan(&content)
 	}
 	if err != nil {
 		fail(w, 500, "could not read extracted content")

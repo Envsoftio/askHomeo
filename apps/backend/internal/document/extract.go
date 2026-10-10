@@ -22,15 +22,17 @@ import (
 const MaxBytes = 10 << 20
 
 type Block struct {
-	Key       string `json:"key"`
-	Kind      string `json:"kind"`
-	Heading   string `json:"heading"`
-	Text      string `json:"text"`
-	StartByte int    `json:"start_byte"`
-	EndByte   int    `json:"end_byte"`
+	ExclusionReason string `json:"exclusion_reason,omitempty"`
+	Key             string `json:"key"`
+	Kind            string `json:"kind"`
+	Heading         string `json:"heading"`
+	Text            string `json:"text"`
+	StartByte       int    `json:"start_byte"`
+	EndByte         int    `json:"end_byte"`
 }
 
 type Result struct {
+	Title    string   `json:"title,omitempty"`
 	Format   string   `json:"format"`
 	Charset  string   `json:"charset"`
 	Blocks   []Block  `json:"blocks"`
@@ -83,6 +85,10 @@ func Extract(raw []byte, contentType, charsetOverride string) (Result, error) {
 	var out Result
 	if format == "html" {
 		out, err = extractHTML(decoded)
+		if err == nil {
+			assessHTMLBlocks(decoded, out.Blocks)
+			out.Title = htmlTitle(decoded)
+		}
 	} else {
 		out, err = extractText(decoded, charset)
 	}
@@ -299,21 +305,46 @@ func extractHTML(decoded string) (Result, error) {
 	var current *Block
 	var content strings.Builder
 	heading := ""
+	headings := make([]string, 6)
+	headingLevel := 0
+	pendingAnchor := ""
 	keys := map[string]int{}
 	offset := 0
 	flush := func() {
 		if current == nil {
 			return
 		}
-		current.Text = whitespace.ReplaceAllString(strings.TrimSpace(content.String()), " ")
+		lines := strings.Split(content.String(), "\n")
+		for i := range lines {
+			lines[i] = whitespace.ReplaceAllString(strings.TrimSpace(lines[i]), " ")
+		}
+		current.Text = strings.TrimSpace(strings.Join(lines, "\n"))
 		if current.Text != "" {
+			if pendingAnchor != "" {
+				current.Key = pendingAnchor
+				pendingAnchor = ""
+			}
 			base := current.Key
 			keys[base]++
 			if keys[base] > 1 {
 				current.Key = fmt.Sprintf("%s-%d", base, keys[base])
 			}
 			if current.Kind == "heading" {
-				heading = current.Text
+				if headingLevel > 0 {
+					headings[headingLevel-1] = current.Text
+					for i := headingLevel; i < len(headings); i++ {
+						headings[i] = ""
+					}
+					path := []string{}
+					for _, part := range headings {
+						if part != "" {
+							path = append(path, part)
+						}
+					}
+					heading = strings.Join(path, " > ")
+				} else {
+					heading = current.Text
+				}
 			} else {
 				current.Heading = heading
 			}
@@ -355,13 +386,24 @@ func extractHTML(decoded string) (Result, error) {
 						key = a.Val
 					}
 				}
+				headingLevel = 0
+				if len(tag) == 2 && tag[0] == 'h' && tag[1] >= '1' && tag[1] <= '6' {
+					headingLevel = int(tag[1] - '0')
+				}
 				current = &Block{Key: key, Kind: blockKind(tag), StartByte: begin}
+			}
+			if !hidden && tag == "a" {
+				for _, attr := range tok.Attr {
+					if (attr.Key == "name" || attr.Key == "id") && attr.Val != "" && (current == nil || strings.TrimSpace(content.String()) == "") {
+						pendingAnchor = attr.Val
+					}
+				}
 			}
 			if tt == html.StartTagToken && !isVoid(tag) {
 				stack = append(stack, frame{tag, hidden})
 			}
 			if tag == "br" && current != nil {
-				content.WriteString(" ")
+				content.WriteString("\n")
 			}
 		} else if tt == html.EndTagToken {
 			tag := strings.ToLower(tok.Data)
@@ -377,7 +419,7 @@ func extractHTML(decoded string) (Result, error) {
 			}
 		} else if tt == html.TextToken && current != nil && !(len(stack) > 0 && stack[len(stack)-1].hidden) {
 			content.WriteString(" ")
-			content.WriteString(tok.Data)
+			content.WriteString(whitespace.ReplaceAllString(tok.Data, " "))
 		}
 	}
 	if current != nil {

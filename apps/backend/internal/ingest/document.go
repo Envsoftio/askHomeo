@@ -47,8 +47,13 @@ func (w *Worker) processDocument(ctx context.Context, jobID, sourceID uuid.UUID)
 	}
 	defer tx.Rollback(ctx)
 	for i, block := range result.Blocks {
-		_, err = tx.Exec(ctx, `INSERT INTO document_blocks(id,source_id,source_asset_id,processing_revision_id,block_index,section_key,kind,heading,original_text,reviewed_text,start_byte,end_byte,warnings)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12) ON CONFLICT(processing_revision_id,block_index) DO NOTHING`, uuid.New(), sourceID, assetID, revisionID, i, block.Key, block.Kind, block.Heading, block.Text, block.StartByte, block.EndByte, result.Warnings)
+		status, note := "pending", ""
+		if block.ExclusionReason != "" {
+			status, note = "excluded", document.Version+": "+block.ExclusionReason
+		}
+		blockID := uuid.New()
+		_, err = tx.Exec(ctx, `INSERT INTO document_blocks(id,source_id,source_asset_id,processing_revision_id,block_index,section_key,kind,heading,original_text,reviewed_text,start_byte,end_byte,warnings,review_status,review_note)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$10,$11,$12,$13,$14) ON CONFLICT(processing_revision_id,block_index) DO NOTHING`, blockID, sourceID, assetID, revisionID, i, block.Key, block.Kind, block.Heading, block.Text, block.StartByte, block.EndByte, result.Warnings, status, note)
 		if err != nil {
 			return err
 		}
@@ -66,17 +71,13 @@ func (w *Worker) processDocument(ctx context.Context, jobID, sourceID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE processing_revisions SET status='review',completed_at=now() WHERE id=$1`, revisionID)
+	_, err = tx.Exec(ctx, `UPDATE processing_revisions SET status='review',completed_at=now(),component_versions_json=component_versions_json||jsonb_build_object('document_extractor',$2::text) WHERE id=$1`, revisionID, document.Version)
 	if err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	var text string
-	for _, block := range result.Blocks {
-		text += "\n" + block.Heading + "\n" + block.Text
-	}
-	w.suggestCategories(ctx, sourceID, revisionID, assetID, text)
+	w.suggestCategories(ctx, sourceID, revisionID, assetID, document.EvidenceText(result.Blocks))
 	return nil
 }

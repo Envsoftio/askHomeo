@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"homeopath-poc/backend/internal/pdfocr"
 )
 
 type pdfMetadata struct {
@@ -56,7 +58,7 @@ func detectPDFMetadata(ctx context.Context, pdf string, pages int, useOCR bool) 
 	}
 	for page := 1; page <= ocrPages && checkCtx.Err() == nil; page++ {
 		image := filepath.Join(dir, "page-"+strconv.Itoa(page)+".png")
-		cmd = exec.CommandContext(checkCtx, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pnggray", "-r120", "-dFirstPage="+strconv.Itoa(page), "-dLastPage="+strconv.Itoa(page), "-sOutputFile="+image, "-f", pdf)
+		cmd = exec.CommandContext(checkCtx, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pnggray", "-r"+strconv.Itoa(pdfocr.RenderDPI), "-dFirstPage="+strconv.Itoa(page), "-dLastPage="+strconv.Itoa(page), "-sOutputFile="+image, "-f", pdf)
 		if cmd.Run() != nil {
 			continue
 		}

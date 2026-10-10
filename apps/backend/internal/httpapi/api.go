@@ -75,6 +75,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/collections/preview", a.previewCollection)
 	mux.HandleFunc("POST /api/v1/collections", a.createCollection)
 	mux.HandleFunc("GET /api/v1/collections/{id}", a.collectionDetail)
+	mux.HandleFunc("GET /api/v1/collections/{id}/text", a.collectionText)
 	mux.HandleFunc("POST /api/v1/collections/{id}/resume", a.resumeCollection)
 	mux.HandleFunc("POST /api/v1/collections/{id}/cancel", a.cancelCollection)
 	mux.HandleFunc("POST /api/v1/collections/{id}/refresh", a.refreshCollection)
@@ -83,6 +84,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/sources/{id}/reprocess", a.reprocess)
 	mux.HandleFunc("POST /api/v1/sources/{id}/disable", a.disableSource)
 	mux.HandleFunc("POST /api/v1/sources/{id}/enable", a.enableSource)
+	mux.HandleFunc("DELETE /api/v1/sources/{id}", a.removeSource)
 	mux.HandleFunc("GET /api/v1/repositories/archive/search", a.searchArchive)
 	mux.HandleFunc("GET /api/v1/repositories/archive/items/{id}", a.archiveItem)
 	mux.HandleFunc("POST /api/v1/doi-references", a.addDOIReference)
@@ -99,6 +101,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/sources/{id}/rights", a.rights)
 	mux.HandleFunc("POST /api/v1/sources/{id}/publish", a.publish)
 	mux.HandleFunc("POST /api/v1/pages/{id}/review", a.reviewPage)
+	mux.HandleFunc("POST /api/v1/pages/{id}/ocr", a.retryPageOCR)
+	mux.HandleFunc("PUT /api/v1/pages/{id}/text", a.correctPageText)
 	mux.HandleFunc("POST /api/v1/research/questions", a.question)
 	mux.HandleFunc("POST /api/v1/research/answer-jobs", a.queueAnswer)
 	mux.HandleFunc("GET /api/v1/research/answer-jobs/{id}", a.answerJob)
@@ -343,7 +347,7 @@ func (a *API) pageImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 func (a *API) sources(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' ORDER BY s.created_at DESC LIMIT 50`)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' WHERE s.removed_at IS NULL ORDER BY s.created_at DESC LIMIT 50`)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -372,7 +376,7 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 	}
 	var title, author, status, rights, sha, path string
 	var pages, reviewed, unclassified, missing, suspect, checked, textTotal int
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT title,author,status,rights_status,coalesce(pdf_sha256,''),coalesce(pdf_path,''),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0),(SELECT count(*) FROM pages WHERE source_id=s.id AND review_status='reviewed' AND page_kind='text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='unclassified'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='missing_text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='text' AND text_qa_status='suspect'),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NOT NULL),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text') FROM sources s WHERE id=$1`, id).Scan(&title, &author, &status, &rights, &sha, &path, &pages, &reviewed, &unclassified, &missing, &suspect, &checked, &textTotal)
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT title,author,status,rights_status,coalesce(pdf_sha256,''),coalesce(pdf_path,''),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0),(SELECT count(*) FROM pages WHERE source_id=s.id AND review_status='reviewed' AND page_kind='text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='unclassified'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='missing_text'),(SELECT count(*) FROM pages WHERE source_id=s.id AND page_kind='text' AND text_qa_status='suspect'),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NOT NULL),(SELECT count(*) FROM pages WHERE source_id=s.id AND scan_page_index>=0 AND page_kind='text') FROM sources s WHERE id=$1 AND removed_at IS NULL`, id).Scan(&title, &author, &status, &rights, &sha, &path, &pages, &reviewed, &unclassified, &missing, &suspect, &checked, &textTotal)
 	if err != nil {
 		fail(w, 404, "source not found")
 		return
@@ -444,7 +448,7 @@ func (a *API) pages(w http.ResponseWriter, r *http.Request) {
 	}
 	start, _ := strconv.Atoi(r.URL.Query().Get("start"))
 	var scanCount int
-	if err := a.Store.DB.QueryRow(r.Context(), `SELECT page_count-1 FROM sources WHERE id=$1`, id).Scan(&scanCount); err != nil {
+	if err := a.Store.DB.QueryRow(r.Context(), `SELECT page_count-1 FROM sources WHERE id=$1 AND removed_at IS NULL`, id).Scan(&scanCount); err != nil {
 		fail(w, 404, "source not found")
 		return
 	}
@@ -454,7 +458,7 @@ func (a *API) pages(w http.ResponseWriter, r *http.Request) {
 	}
 	showOmitted := r.URL.Query().Get("show_omitted") == "true"
 	attention := r.URL.Query().Get("needs_attention") == "true"
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,pdf_page_index,scan_page_index,coalesce(printed_label,''),review_status,page_kind,coalesce(review_note,''),text_raw,image_url,triage_reason,text_qa_status,text_qa_reason FROM pages WHERE source_id=$1 AND (($4 AND (page_kind IN ('unclassified','missing_text') OR (page_kind='text' AND text_qa_status='suspect'))) OR (NOT $4 AND scan_page_index >= $2 AND scan_page_index < $2+30 AND ($3 OR page_kind NOT IN ('blank','book_info')))) ORDER BY scan_page_index`, id, start, showOmitted, attention)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,pdf_page_index,scan_page_index,coalesce(printed_label,''),review_status,page_kind,coalesce(review_note,''),text_raw,image_url,triage_reason,text_qa_status,text_qa_reason,text_revision FROM pages WHERE source_id=$1 AND (($4 AND (page_kind IN ('unclassified','missing_text') OR (page_kind='text' AND text_qa_status IN ('suspect','pending')))) OR (NOT $4 AND scan_page_index >= $2 AND scan_page_index < $2+30 AND ($3 OR page_kind NOT IN ('blank','book_info')))) ORDER BY scan_page_index`, id, start, showOmitted, attention)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -465,14 +469,15 @@ func (a *API) writePages(w http.ResponseWriter, rows pgx.Rows) {
 	defer rows.Close()
 	out := []any{}
 	for rows.Next() {
+		var textRevision int
 		var pid uuid.UUID
 		var pdf, scan int
 		var label, status, kind, note, txt, img, reason, qaStatus, qaReason string
-		if err := rows.Scan(&pid, &pdf, &scan, &label, &status, &kind, &note, &txt, &img, &reason, &qaStatus, &qaReason); err != nil {
+		if err := rows.Scan(&pid, &pdf, &scan, &label, &status, &kind, &note, &txt, &img, &reason, &qaStatus, &qaReason, &textRevision); err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		out = append(out, map[string]any{"id": pid, "pdf_page_index": pdf, "scan_page_index": scan, "printed_label": label, "review_status": status, "page_kind": kind, "review_note": note, "triage_reason": reason, "text_qa_status": qaStatus, "text_qa_reason": qaReason, "text": txt, "image_url": img})
+		out = append(out, map[string]any{"id": pid, "pdf_page_index": pdf, "scan_page_index": scan, "printed_label": label, "review_status": status, "page_kind": kind, "review_note": note, "triage_reason": reason, "text_qa_status": qaStatus, "text_qa_reason": qaReason, "text_revision": textRevision, "text": txt, "image_url": img})
 	}
 	if err := rows.Err(); err != nil {
 		fail(w, 500, "could not finish loading pages")
@@ -547,11 +552,14 @@ func (a *API) reviewPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var previousKind string
+	var previousKind, qaStatus string
 	var revisionID uuid.UUID
-	err = tx.QueryRow(r.Context(), `SELECT p.page_kind,p.processing_revision_id FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.id=$1 AND s.status='review' AND p.scan_page_index>=0 FOR UPDATE OF p`, id).Scan(&previousKind, &revisionID)
+	err = tx.QueryRow(r.Context(), `SELECT p.page_kind,p.processing_revision_id,p.text_qa_status FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.id=$1 AND s.status='review' AND p.scan_page_index>=0 FOR UPDATE OF s,p`, id).Scan(&previousKind, &revisionID, &qaStatus)
 	if err != nil {
 		fail(w, 409, "page is unavailable for review")
+		return
+	}
+	if body.Outcome == "text" && qaStatus != "passed" && !requireAdmin(w, r) {
 		return
 	}
 	tag, err := tx.Exec(r.Context(), `UPDATE pages p SET review_status=$3,review_note=$2,page_kind=$4,triage_reason='',text_qa_status=CASE WHEN $4='text' AND p.text_qa_status='suspect' THEN 'accepted' ELSE p.text_qa_status END FROM sources s WHERE p.id=$1 AND p.source_id=s.id AND s.status='review' AND p.scan_page_index>=0 AND ($4<>'text' OR length(trim(p.text_raw))>0)`, id, note, status, body.Outcome)

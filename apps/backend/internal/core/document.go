@@ -57,6 +57,9 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 	}
 	var sample strings.Builder
 	for _, block := range extracted.Blocks {
+		if block.ExclusionReason != "" {
+			continue
+		}
 		sample.WriteString(" ")
 		sample.WriteString(block.Text)
 		if sample.Len() > 600 {
@@ -81,6 +84,9 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 		}
 	}
 	title := strings.TrimSpace(info.Title)
+	if title == "" {
+		title = extracted.Title
+	}
 	if title == "" {
 		for _, block := range extracted.Blocks {
 			if block.Kind == "heading" {

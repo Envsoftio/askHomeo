@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"homeopath-poc/backend/internal/core"
 	"homeopath-poc/backend/internal/localllm"
+	"homeopath-poc/backend/internal/pdfocr"
 )
 
 type Worker struct {
@@ -229,7 +230,7 @@ func (w *Worker) recordRevisionTools(ctx context.Context, sourceID uuid.UUID) er
 	if recorded {
 		return nil
 	}
-	versions := map[string]string{"ingest": "local-v1", "page_qa": "automatic-v1", "ocr_language": "eng"}
+	versions := map[string]string{"ingest": "local-v1", "page_qa": "confidence-v2", "ocr_language": "eng"}
 	for _, tool := range []struct{ key, binary, arg string }{{"ghostscript", "gs", "--version"}, {"tesseract", "tesseract", "--version"}} {
 		step, cancel := context.WithTimeout(ctx, 5*time.Second)
 		output, err := exec.CommandContext(step, tool.binary, tool.arg).Output()
@@ -239,7 +240,7 @@ func (w *Worker) recordRevisionTools(ctx context.Context, sourceID uuid.UUID) er
 		}
 		versions[tool.key] = strings.TrimSpace(strings.SplitN(string(output), "\n", 2)[0])
 	}
-	config := map[string]any{"text_extraction": "gs txtwrite", "ocr": "tesseract eng psm3", "qa_render_dpi": 150, "blank_render_dpi": 40, "chunking": "page-safe-v1"}
+	config := map[string]any{"text_extraction": "gs txtwrite", "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": "page-safe-v1"}
 	configBytes, _ := json.Marshal(config)
 	configHash := sha256.Sum256(configBytes)
 	config["processing_config_sha256"] = hex.EncodeToString(configHash[:])
@@ -350,14 +351,14 @@ func extractLocalPage(ctx context.Context, pdf string, index int) (string, strin
 		return "", "", errors.New("page text is too large")
 	}
 	raw := strings.TrimSpace(string(b))
-	if len([]rune(raw)) >= 80 {
+	if len([]rune(raw)) >= 80 && pdfocr.SuspiciousText(raw) == "" {
 		return raw, "PDF text", nil
 	}
 	ocr, err := freshOCR(ctx, pdf, index)
 	if err != nil {
 		return "", "", err
 	}
-	if len([]rune(strings.TrimSpace(ocr))) > len([]rune(raw)) {
+	if len([]rune(strings.TrimSpace(ocr))) > len([]rune(raw)) || (pdfocr.SuspiciousText(raw) != "" && strings.TrimSpace(ocr) != "") {
 		return strings.TrimSpace(ocr), "Tesseract OCR", nil
 	}
 	return raw, "PDF text", nil

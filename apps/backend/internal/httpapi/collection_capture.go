@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"homeopath-poc/backend/internal/collection"
 	"homeopath-poc/backend/internal/core"
+	"homeopath-poc/backend/internal/document"
 )
 
 func (a *API) createCollection(w http.ResponseWriter, r *http.Request) {
@@ -321,6 +322,8 @@ func (a *API) importCollectionItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.TrimSpace(b.Title) != "" {
 		title = b.Title
+	} else if extracted, extractErr := document.Extract(raw, contentType, b.CharsetOverride); extractErr == nil && extracted.Title != "" {
+		title = extracted.Title
 	}
 	transport := "https"
 	if strings.HasPrefix(final, "http:") {

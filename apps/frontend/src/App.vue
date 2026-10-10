@@ -31,8 +31,16 @@ type URLPreview={requested_url:string,final_url:string,redirected:boolean,transp
 const linkPreview=ref<URLPreview|null>(null),previewError=ref(''),previewBusy=ref(false),allowHTTPRedirect=ref(false)
 const previewCharset=ref('')
 const linkPDF=ref(''),linkTitle=ref(''),linkAuthor=ref(''),linkEdition=ref(''),linkPublication=ref(''),linkRepository=ref(''),linkSourceURL=ref(''),linkRights=ref(''),linkNotice=ref('')
-type CollectionManifest={entries:{url:string,final_url?:string,depth:number,state:string,role?:string,format?:string,byte_size?:number,sha256?:string,block_count?:number,charset?:string,sample?:string,anchors?:string[],warnings?:string[],error?:string}[],links:{from:string,to:string,fragment?:string,text?:string,relation:string,state:string}[],fetched:number,failed:number,total_bytes:number,complete:boolean,limit_reasons:string[]}
+type CollectionManifest={entries:{url:string,final_url?:string,depth:number,state:string,role?:string,format?:string,byte_size?:number,sha256?:string,block_count?:number,excluded_blocks?:number,suggested_categories?:string[],classification_reason?:string,charset?:string,sample?:string,anchors?:string[],warnings?:string[],error?:string}[],links:{from:string,to:string,fragment?:string,text?:string,relation:string,state:string}[],fetched:number,failed:number,total_bytes:number,complete:boolean,limit_reasons:string[]}
 const collectionSeed=ref(''),collectionHosts=ref(''),collectionPaths=ref(''),collectionMaxDocs=ref(50),collectionMaxDepth=ref(3),collectionBusy=ref(false),collectionError=ref(''),collectionManifest=ref<CollectionManifest|null>(null)
+type CapturedItem={id:string,requested_url:string,final_url:string,state:string,role:string,source_id:string|null,source_status:string,rights_status:string,index_status:string,error:string,attempts:number}
+type CapturedCollection={collection_id:string,snapshot_id:string,title:string,author:string,generation:number,state:string,incomplete_reasons:string[],items:CapturedItem[],active_snapshot_id:string|null,capture_complete:boolean}
+const collectionTitle=ref(''),collectionAuthor=ref(''),collectionEdition=ref(''),collectionRationale=ref(''),collectionCaptureDocs=ref(100),collectionHTTPConsent=ref(false)
+const collectionNeedsHTTPConsent=computed(()=>collectionSeed.value.trim().toLowerCase().startsWith('http://')&&!collectionHTTPConsent.value)
+const capturedCollection=ref<CapturedCollection|null>(null),capturedCollectionID=ref('')
+const collectionLimitReasons=computed(()=>[...new Set(capturedCollection.value?.incomplete_reasons||[])])
+const autoImportCollectionID=ref(window.localStorage.getItem('linked-book-auto-import')||'')
+let collectionWorkKey=''
 watch(collectionSeed,(value)=>{
  collectionManifest.value=null
  collectionError.value=''
@@ -41,16 +49,29 @@ watch(collectionSeed,(value)=>{
  try{
   const url=new URL(value.trim())
   if(!['http:','https:'].includes(url.protocol)||url.username||url.password)return
+  const folder=url.pathname.slice(0,url.pathname.lastIndexOf('/')+1)||'/'
+  const workKey=url.hostname.toLowerCase()+folder
+  if(collectionWorkKey&&collectionWorkKey!==workKey){
+   collectionTitle.value=''
+   collectionAuthor.value=''
+   collectionEdition.value=''
+   collectionRationale.value=''
+   collectionMaxDocs.value=50
+   collectionMaxDepth.value=3
+   collectionCaptureDocs.value=100
+   collectionHTTPConsent.value=false
+   capturedCollection.value=null
+   capturedCollectionID.value=''
+   autoImportCollectionID.value=''
+   window.localStorage.removeItem('linked-book-auto-import')
+  }
+  collectionWorkKey=workKey
   collectionHosts.value=url.hostname
-  collectionPaths.value=url.pathname.slice(0,url.pathname.lastIndexOf('/')+1)||'/'
+  collectionPaths.value=folder
  }catch{
   // Wait for a complete public HTTP(S) URL before suggesting a scope.
  }
 })
-type CapturedItem={id:string,requested_url:string,final_url:string,state:string,role:string,source_id:string|null,source_status:string,rights_status:string,index_status:string,error:string,attempts:number}
-type CapturedCollection={collection_id:string,snapshot_id:string,title:string,author:string,generation:number,state:string,incomplete_reasons:string[],items:CapturedItem[],active_snapshot_id:string|null,capture_complete:boolean}
-const collectionTitle=ref(''),collectionAuthor=ref(''),collectionEdition=ref(''),collectionRationale=ref(''),collectionCaptureDocs=ref(50),collectionHTTPConsent=ref(false)
-const capturedCollection=ref<CapturedCollection|null>(null),capturedCollectionID=ref('')
 const metadata=ref({title:'',author:'',edition:'',publication_info:'',repository:'',source_url:'',rights_statement:''}),printedLabel=ref('')
 const sourceAccessReason=ref('')
 type AnswerCitation={id:string,label:string,title:string,author:string,printed_page:string,scan_position:number,literature_categories?:string[],evidence_category?:string,format?:string}
@@ -190,6 +211,7 @@ function pageState(p:Page){
  if(p.page_kind==='illustration')return 'Image kept'
  if(p.page_kind==='missing_text')return 'Text needs repair'
  if(p.page_kind==='unclassified')return 'Choose an outcome'
+ if(p.text_qa_status==='pending')return 'Awaiting scan verification'
  if(p.text_qa_status==='suspect')return 'Check suspected text'
  if(p.text_qa_status==='passed')return 'Text checked automatically'
  return p.review_status==='reviewed'?'Checked':'Needs check'
@@ -277,19 +299,35 @@ async function loadCapturedCollection(){
  try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollectionID.value.trim()))}
  catch(e){collectionError.value=e instanceof Error?e.message:'Could not load collection.'}
  finally{collectionBusy.value=false}
+ await prepareCapturedBook()
+}
+async function prepareCapturedBook(){
+ const current=capturedCollection.value
+ if(!current||current.collection_id!==autoImportCollectionID.value||current.state!=='review')return
+ autoImportCollectionID.value=''
+ window.localStorage.removeItem('linked-book-auto-import')
+ if(!current.capture_complete){
+  collectionError.value='Book capture is incomplete. Check the listed limits or failed pages before preparing sources.'
+  return
+ }
+ await importCapturedContent()
 }
 async function startCollectionCapture(){
  collectionBusy.value=true;collectionError.value=''
  try{
-  const result=await api<{collection_id:string}>('/collections',{method:'POST',body:JSON.stringify({title:collectionTitle.value.trim(),author:collectionAuthor.value.trim(),edition:collectionEdition.value.trim(),rationale:collectionRationale.value.trim(),scope:collectionScope(true)})})
-  capturedCollectionID.value=result.collection_id;await loadCapturedCollection()
+  const rationale=collectionRationale.value.trim()||`Administrator selected ${collectionSeed.value.trim()} for bounded linked-book review.`
+  const result=await api<{collection_id:string}>('/collections',{method:'POST',body:JSON.stringify({title:collectionTitle.value.trim(),author:collectionAuthor.value.trim(),edition:collectionEdition.value.trim(),rationale,scope:collectionScope(true)})})
+  capturedCollectionID.value=result.collection_id
+  autoImportCollectionID.value=result.collection_id
+  window.localStorage.setItem('linked-book-auto-import',result.collection_id)
+  await loadCapturedCollection()
  }catch(e){collectionError.value=e instanceof Error?e.message:'Could not start collection capture.'}
  finally{collectionBusy.value=false}
 }
 async function collectionAction(action:'resume'|'cancel'|'activate'){
  if(!capturedCollection.value)return
  collectionBusy.value=true;collectionError.value=''
- try{await api('/collections/'+capturedCollection.value.collection_id+'/'+action,{method:'POST',body:JSON.stringify({rationale:collectionRationale.value.trim(),allow_partial:false})});await loadCapturedCollection()}
+ try{await api('/collections/'+capturedCollection.value.collection_id+'/'+action,{method:'POST',body:JSON.stringify({rationale:collectionRationale.value.trim()||`Administrator requested ${action} for linked book ${capturedCollection.value.title}.`,allow_partial:false})});await loadCapturedCollection()}
  catch(e){collectionError.value=e instanceof Error?e.message:'Could not update collection.'}
  finally{collectionBusy.value=false}
 }
@@ -362,7 +400,18 @@ async function chooseSource(s:Source){
 async function loadPages(){if(!active.value)return;try{pages.value=await api<Page[]>(`/sources/${active.value.id}/pages?start=${pageOffset.value}&show_omitted=${showOmitted.value}&needs_attention=${needsAttention.value}`);connectionError.value=''}catch(e){connectionError.value='Could not load these scans. Try again.'}}
 function movePages(delta:number){needsAttention.value=false;pageOffset.value=Math.max(0,pageOffset.value+delta);selectedPage.value=null;loadPages()}
 async function jumpToScan(){const n=Math.min(active.value?.pages_total||1,Math.max(1,Math.floor(scanNumber.value||1)));needsAttention.value=false;showOmitted.value=true;pageOffset.value=Math.floor((n-1)/30)*30;selectedPage.value=null;await loadPages();const p=pages.value.find(p=>p.scan_page_index===n-1);if(p)selectPage(p)}
-function selectPage(p:Page){selectedPage.value=p;printedLabel.value=p.printed_label;pageNote.value=p.page_kind==='unclassified'||p.review_note==='Blank page; omitted from answers.'||p.review_note==='Library or book information; omitted from answers.'?'':p.review_note||'';pageOutcome.value=p.page_kind==='unclassified'?'':p.page_kind}
+const pageTextDraft=ref(''),ocrWarning=ref(''),repairNote=ref(''),repairChecked=ref(false)
+function selectPage(p:Page){pageTextDraft.value=p.text;ocrWarning.value='';repairNote.value='';repairChecked.value=false;selectedPage.value=p;printedLabel.value=p.printed_label;pageNote.value=p.page_kind==='unclassified'||p.review_note==='Blank page; omitted from answers.'||p.review_note==='Library or book information; omitted from answers.'?'':p.review_note||'';pageOutcome.value=p.page_kind==='unclassified'?'':p.page_kind}
+function retryPageOCR(){if(!selectedPage.value)return;const page=selectedPage.value;run(async()=>{
+ const draft=await api<{text:string,warning:string,text_revision:number}>(`/pages/${page.id}/ocr`,{method:'POST'})
+ if(selectedPage.value?.id!==page.id)return
+ if(draft.text_revision!==page.text_revision)throw new Error('This page changed. Reload it before retrying.')
+ pageTextDraft.value=draft.text;ocrWarning.value=draft.warning||'OCR finished. Check every line against the original scan before saving.';repairChecked.value=false
+})}
+function savePageText(){if(!selectedPage.value||!repairChecked.value)return;const page=selectedPage.value;run(async()=>{
+ await api(`/pages/${page.id}/text`,{method:'PUT',body:JSON.stringify({text:pageTextDraft.value,note:repairNote.value,text_revision:page.text_revision})})
+ await loadPages();selectedPage.value=null
+})}
 function saveMetadata(){if(!active.value)return;run(async()=>{await api(`/sources/${active.value!.id}/metadata`,{method:'PATCH',body:JSON.stringify(metadata.value)})})}
 function savePrintedLabel(){if(!selectedPage.value)return;run(async()=>{const id=selectedPage.value!.id;await api(`/pages/${id}/label`,{method:'PATCH',body:JSON.stringify({printed_label:printedLabel.value})});await loadPages();selectedPage.value=pages.value.find(p=>p.id===id)||null})}
 function reviewPage(){if(!selectedPage.value||!pageOutcome.value||(pageNoteRequired.value&&!pageNote.value.trim()))return;run(async()=>{
@@ -378,6 +427,7 @@ function retryIndex(){if(!active.value)return;run(async()=>{await api(`/sources/
 function reprocessSource(){if(!active.value)return;run(async()=>{const result=await api<{source_id:string}>(`/sources/${active.value!.id}/reprocess`,{method:'POST'});await refresh();const candidate=sources.value.find(s=>s.id===result.source_id);if(candidate)await chooseSource(candidate)})}
 function reimportDocument(){if(!active.value)return;run(async()=>{const result=await api<{source_id:string}>(`/sources/${active.value!.id}/reimport-document`,{method:'POST',body:JSON.stringify({allow_https_to_http_redirect:false})});await refresh();const candidate=sources.value.find(s=>s.id===result.source_id);if(candidate)await chooseSource(candidate)})}
 function setSourceAccess(enable:boolean){if(!active.value||sourceAccessReason.value.trim().length<8)return;run(async()=>{await api(`/sources/${active.value!.id}/${enable?'enable':'disable'}`,{method:'POST',body:JSON.stringify({reason:sourceAccessReason.value.trim()})});sourceAccessReason.value=''})}
+function removeSource(source:Source,reason:string){run(async()=>{await api(`/sources/${source.id}`,{method:'DELETE',body:JSON.stringify({reason})});selectedSourceIds.value=selectedSourceIds.value.filter(id=>id!==source.id);if(active.value?.id===source.id){active.value=null;detail.value=null;tab.value='sources'}})}
 function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='selected'&&asksAboutSelectedSource.value&&selectedSourceIds.value.length!==1)selectedSourceIds.value=[]}
 function showAnswer(result:SavedAnswer,openAsk=true){
  answer.value=result.answer;answerStatus.value=result.status;citations.value=result.citations;searches.value=result.searches||[];evidence.value=result.evidence||[];sections.value=result.sections||[];omittedClaims.value=result.omitted_claim_count||0
@@ -417,7 +467,7 @@ async function pollSources(){
  try{
   await refresh()
   if(capturedCollection.value && !collectionBusy.value && ['queued','capturing'].includes(capturedCollection.value.state)){
-   try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollection.value.collection_id))}
+   try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollection.value.collection_id));await prepareCapturedBook()}
    catch(e){collectionError.value=e instanceof Error?e.message:'Could not refresh collection progress.'}
   }
  }finally{
@@ -446,6 +496,7 @@ onMounted(async()=>{
  if(!navigator.onLine)onOffline()
  try{session.value=await api<{name:string,role:string}>('/session')}catch{session.value=null}
  sessionLoading.value=false
+ if(session.value?.role==='admin'&&autoImportCollectionID.value){capturedCollectionID.value=autoImportCollectionID.value;void loadCapturedCollection()}
  reconcileNow()
  window.addEventListener('online',reconcileNow)
  window.addEventListener('offline',onOffline)
@@ -891,11 +942,11 @@ onUnmounted(()=>{
           </div>
           <div v-show="intakeMethod === 'collection'" class="intake-body">
             <form class="intake-form" @submit.prevent="previewLinkedCollection">
-              <h3>Import a linked book</h3>
+              <h3>Collect a linked book</h3>
               <p class="input-hint">
-                Paste a book URL to fill its allowed website and folder automatically.
-                You can edit these limits below; changing the URL resets them.
-                The preview stays within these limits and does not save or publish documents.
+                Paste the book's contents URL. The app follows links within that book folder,
+                saves the original pages, and extracts their text for review. Each page keeps its
+                URL for exact citations. Changing books clears the previous book's details.
               </p>
               <label
                 >Starting document URL<input
@@ -904,38 +955,15 @@ onUnmounted(()=>{
                   required
                   placeholder="https://example.org/book/index.html"
               /></label>
-              <label
-                >Allowed hosts, separated by commas<input
-                  v-model="collectionHosts"
-                  required
-                  placeholder="example.org"
-              /></label>
-              <label
-                >Allowed path prefixes, one per line<textarea
-                  v-model="collectionPaths"
-                  required
-                  rows="3"
-                  placeholder="/book/&#10;/chapters/"
-                />
-              </label>
-              <div class="metadata-grid">
-                <label
-                  >Maximum documents<input
-                    v-model.number="collectionMaxDocs"
-                    type="number"
-                    min="1"
-                    max="100" /></label
-                ><label
-                  >Maximum link depth<input
-                    v-model.number="collectionMaxDepth"
-                    type="number"
-                    min="0"
-                    max="5"
-                /></label>
-              </div>
-              <button :disabled="collectionBusy || !collectionSeed.trim()">
-                {{ collectionBusy ? "Discovering…" : "Preview collection" }}
-              </button>
+              <details><summary>Advanced link limits</summary>
+                <label>Allowed hosts, separated by commas<input v-model="collectionHosts" required placeholder="example.org" /></label>
+                <label>Allowed path prefixes, one per line<textarea v-model="collectionPaths" required rows="3" placeholder="/book/&#10;/chapters/" /></label>
+                <div class="metadata-grid">
+                  <label>Preview document limit<input v-model.number="collectionMaxDocs" type="number" min="1" max="100" /></label>
+                  <label>Maximum link depth<input v-model.number="collectionMaxDepth" type="number" min="0" max="5" /></label>
+                </div>
+              </details>
+              <button :disabled="collectionBusy || !collectionSeed.trim()">{{ collectionBusy ? "Discovering…" : "Preview pages (optional)" }}</button>
               <p v-if="collectionError" class="error" role="alert">
                 {{ collectionError }}
               </p>
@@ -969,6 +997,8 @@ onUnmounted(()=>{
                     Final URL: {{ entry.final_url }}
                   </p>
                   <p v-if="entry.error" class="error">{{ entry.error }}</p>
+                  <p v-if="entry.suggested_categories?.length">Detected categories: {{ entry.suggested_categories.join(', ').replaceAll('_', ' ') }}. {{ entry.classification_reason }}</p>
+                  <p v-if="entry.excluded_blocks">{{ entry.excluded_blocks }} navigation/advertising blocks excluded from evidence; originals retained for review.</p>
                   <p v-if="entry.charset">Text encoding: {{ entry.charset }}</p>
                   <p v-if="entry.sample" class="input-hint">{{ entry.sample }}</p>
                   <p v-if="entry.anchors?.length">
@@ -989,32 +1019,41 @@ onUnmounted(()=>{
               <p>This preview creates no source. Capture below saves a separate, reviewable snapshot.</p>
             </div>
             <div class="step">
-              <h3>Save book for source preparation</h3>
-              <p class="input-hint">Save the book pages, then use “Create sources for all content pages” to extract their text into Sources. Review content and rights, publish, and wait for indexing before asking questions.</p>
+              <h3>Prepare book text for review</h3>
+              <p class="input-hint">One action collects related pages and prepares their text. Review the extracted passages, categories, and rights before publishing anything to RAG.</p>
               <div class="metadata-grid">
                 <label>Work title<input v-model="collectionTitle" required /></label>
                 <label>Author<input v-model="collectionAuthor" required /></label>
-                <label>Edition<input v-model="collectionEdition" /></label>
-                <label>Maximum capture documents<input v-model.number="collectionCaptureDocs" type="number" min="1" max="100" /></label>
               </div>
-              <label>Scope decision reason<input v-model="collectionRationale" placeholder="Why this work and scope were selected" /></label>
+              <details><summary>Advanced book details</summary>
+                <label>Edition<input v-model="collectionEdition" /></label>
+                <label>Maximum pages to collect<input v-model.number="collectionCaptureDocs" type="number" min="1" max="100" /></label>
+                <label>Scope decision reason<input v-model="collectionRationale" placeholder="Why this work and scope were selected" /></label>
+              </details>
               <label class="preview-option"><input v-model="collectionHTTPConsent" type="checkbox" /> Allow unencrypted HTTP for this capture</label>
-              <button :disabled="collectionBusy || !collectionTitle.trim() || !collectionAuthor.trim() || !collectionRationale.trim()" @click="startCollectionCapture">Save book pages</button>
-              <label>Existing collection ID<input v-model="capturedCollectionID" placeholder="UUID" /></label>
-              <button :disabled="collectionBusy || !capturedCollectionID.trim()" @click="loadCapturedCollection">Load collection status</button>
+              <p v-if="collectionNeedsHTTPConsent" class="input-hint">Select the HTTP option above to collect this HTTP book.</p>
+              <button :disabled="collectionBusy || collectionNeedsHTTPConsent || !collectionSeed.trim() || !collectionTitle.trim() || !collectionAuthor.trim()" @click="startCollectionCapture">Collect and extract book</button>
+              <details><summary>Resume an existing book</summary>
+                <label>Collection ID<input v-model="capturedCollectionID" placeholder="UUID" /></label>
+                <button :disabled="collectionBusy || !capturedCollectionID.trim()" @click="loadCapturedCollection">Load collection status</button>
+              </details>
               <p v-if="collectionError" class="error" role="alert">{{ collectionError }}</p>
             </div>
             <div v-if="capturedCollection" class="step">
-              <h3>{{ capturedCollection.title }} · capture {{ capturedCollection.state }}</h3>
-              <p>Generation {{ capturedCollection.generation }} · {{ capturedCollection.items.length }} discovered · active snapshot {{ capturedCollection.active_snapshot_id || 'none' }}</p>
+              <h3>{{ capturedCollection.title }} · {{ capturedCollection.state === 'review' ? 'ready for source review' : capturedCollection.state }}</h3>
+              <p>{{ capturedCollection.items.filter(item => item.state === 'fetched').length }} pages saved · {{ capturedCollection.items.filter(item => item.source_id).length }} prepared for review · {{ capturedCollection.items.filter(item => item.index_status === 'ready').length }} indexed</p>
               <p>{{ capturedCollection.capture_complete ? 'Selected fetch coverage complete; content review remains.' : 'Coverage incomplete or capture/review still in progress.' }}</p>
-              <p v-for="reason in capturedCollection.incomplete_reasons" :key="reason" class="error">{{ reason }}</p>
+              <p v-for="reason in collectionLimitReasons" :key="reason" class="error">{{ reason }}</p>
+              <p v-if="['review','active'].includes(capturedCollection.state)"><a :href="'/api/v1/collections/'+capturedCollection.collection_id+'/text'" target="_blank" rel="noopener noreferrer">Read all extracted book text with page URLs</a> <span class="input-hint">Review copy; searchable passages still require approval.</span></p>
               <button :disabled="collectionBusy" @click="loadCapturedCollection">Refresh status</button>
-              <button v-if="['failed','cancelled','review'].includes(capturedCollection.state)" :disabled="collectionBusy || !collectionRationale.trim()" @click="collectionAction('resume')">Resume failed items</button>
-              <button v-if="['queued','capturing'].includes(capturedCollection.state)" :disabled="collectionBusy || !collectionRationale.trim()" @click="collectionAction('cancel')">Cancel capture</button>
-              <button v-if="capturedCollection.state === 'review'" :disabled="collectionBusy || !collectionRationale.trim()" @click="collectionAction('activate')">Activate reviewed collection</button>
-              <button v-if="capturedCollection.state === 'review' && capturedCollection.items.some(item => item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id)" :disabled="collectionBusy" @click="importCapturedContent">Create sources for all content pages</button>
-              <details open><summary>Captured items ({{ capturedCollection.items.length }})</summary>
+              <button v-if="['failed','cancelled','review'].includes(capturedCollection.state) && !capturedCollection.capture_complete" :disabled="collectionBusy" @click="collectionAction('resume')">Retry failed pages</button>
+              <button v-if="capturedCollection.state === 'review' && capturedCollection.items.some(item => item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id)" :disabled="collectionBusy" @click="importCapturedContent">Prepare remaining pages for review</button>
+              <details><summary>Advanced collection actions</summary>
+                <button v-if="['queued','capturing'].includes(capturedCollection.state)" :disabled="collectionBusy" @click="collectionAction('cancel')">Cancel capture</button>
+                <button v-if="capturedCollection.state === 'review'" :disabled="collectionBusy" @click="collectionAction('activate')">Activate fully reviewed collection</button>
+                <p>Collection activation requires every candidate page to be published and indexed. Each published page can already be searched individually.</p>
+              </details>
+              <details><summary>Pages ({{ capturedCollection.items.length }})</summary>
                 <article v-for="item in capturedCollection.items" :key="item.id">
                   <strong>{{ item.state }}</strong> · {{ item.role }} · {{ item.requested_url }}
                   <p v-if="item.error" class="error">{{ item.error }} ({{ item.attempts }} attempts)</p>
@@ -1158,8 +1197,10 @@ onUnmounted(()=>{
           :sources="librarySources"
           :can-add="session.role === 'admin'"
           :loading="sourcesLoading"
+          :busy="busy"
           @open="chooseSource"
           @add="openIntake"
+          @remove="removeSource"
         />
         <details
           v-if="doiReferences.length"
@@ -1268,8 +1309,7 @@ onUnmounted(()=>{
               "
             >
               <p>
-                Choose one or more literature categories. Unclassified is a standalone
-                choice.
+                Categories are detected from document content where possible. Review or change the detected values; uncertain documents remain unclassified.
               </p>
               <div class="actions">
                 <label v-for="value in literatureOptions" :key="value"
@@ -1381,6 +1421,7 @@ onUnmounted(()=>{
                   {{ block.section_key }} · {{ block.review_status }}
                 </h4>
                 <p v-if="block.heading">Under {{ block.heading }}</p>
+                <p v-if="block.review_status === 'excluded'" class="input-hint">Excluded from search: {{ block.review_note }}. Accept this block to restore it during draft review.</p>
                 <p v-for="warning in block.warnings" :key="warning" class="error">
                   {{ warning }}
                 </p>
@@ -1728,7 +1769,7 @@ onUnmounted(()=>{
                 <h3>1. Check the pages</h3>
                 <p>
                   Clear blank scans are omitted from answers. The system compares stored
-                  text with a fresh OCR pass; pages with suspected problems stay in your
+                  text with a 300 DPI OCR pass and checks word confidence; uncertain words and failed checks stay in your
                   review list. Every original scan remains in the PDF.
                 </p>
                 <p
@@ -1838,7 +1879,7 @@ onUnmounted(()=>{
                   }}</small>
                 </h3>
                 <p v-if="selectedPage.triage_reason">{{ selectedPage.triage_reason }}</p>
-                <p v-if="selectedPage.text_qa_status === 'suspect'">
+                <p v-if="['suspect', 'pending'].includes(selectedPage.text_qa_status)">
                   {{ selectedPage.text_qa_reason }}
                 </p>
                 <p
@@ -1865,6 +1906,21 @@ onUnmounted(()=>{
                       "No text found. Check whether this scan is blank, illustrated, or missing readable text."
                     }}</pre>
                   </div>
+                </div>
+                <div v-if="session.role === 'admin'" class="step">
+                  <h4>Repair this scan’s text</h4>
+                  <button :disabled="busy" @click="retryPageOCR">{{ busy ? 'Working…' : 'Retry OCR at 300 DPI' }}</button>
+                  <p>Retry creates a draft below. Compare it with the original scan and correct any words or missing lines before saving.</p>
+                  <p v-if="ocrWarning">{{ ocrWarning }}</p>
+                  <label class="note-label">Corrected text
+                    <textarea v-model="pageTextDraft" rows="16" :disabled="busy" @input="repairChecked=false" />
+                  </label>
+                  <label class="note-label">Correction note
+                    <textarea v-model="repairNote" rows="2" placeholder="Describe the words or lines you checked" />
+                  </label>
+                  <label class="check"><input v-model="repairChecked" type="checkbox" />I checked all text against the original scan.</label>
+                  <button :disabled="busy || !repairChecked || !pageTextDraft.trim() || !repairNote.trim()" @click="savePageText">Save checked text correction</button>
+                  <p>Previous text is retained in correction history. Saved text becomes searchable after publication and indexing.</p>
                 </div>
                 <label class="note-label"
                   >Printed page label
