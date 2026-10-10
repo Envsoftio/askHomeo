@@ -11,7 +11,7 @@ import (
 )
 
 // Version identifies generic extraction/filter rules, never a book or hostname.
-const Version = "document-structure-v2"
+const Version = "document-structure-v3"
 
 // EvidenceText excludes navigation from classification and search preparation.
 // Excluded blocks remain available, with original offsets, for review/restoration.

@@ -103,22 +103,23 @@ func (a *API) collectionDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := []map[string]any{}
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT i.id,i.requested_url,i.final_url,i.depth,i.discovery_ordinal,i.state,i.role,i.format,i.content_type,coalesce(i.sha256,''),coalesce(i.byte_size,0),i.anchors,i.block_count,i.warnings,i.error,i.attempts,i.source_id,coalesce(s.status,''),coalesce(s.rights_status,''),coalesce(ir.status,'') FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id WHERE i.snapshot_id=$1 ORDER BY i.discovery_ordinal`, snapshotID)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT i.id,i.requested_url,i.final_url,i.depth,i.discovery_ordinal,i.state,i.role,i.format,i.content_type,coalesce(i.sha256,''),coalesce(i.byte_size,0),i.anchors,i.block_count,i.warnings,i.error,i.attempts,i.source_id,coalesce(s.status,''),coalesce(s.rights_status,''),coalesce(ir.status,''),i.preparation_state,i.preparation_attempts,i.preparation_error,i.review_excluded FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id WHERE i.snapshot_id=$1 ORDER BY i.discovery_ordinal`, snapshotID)
 	if err != nil {
 		fail(w, 500, "could not read collection items")
 		return
 	}
 	for rows.Next() {
 		var itemID uuid.UUID
-		var requested, final, state, role, format, contentType, sha, problem, sourceStatus, rightsStatus, indexStatus string
-		var depth, ordinal, blocks, attempts int
+		var requested, final, state, role, format, contentType, sha, problem, sourceStatus, rightsStatus, indexStatus, preparationState, preparationError string
+		var depth, ordinal, blocks, attempts, preparationAttempts int
 		var size int64
+		var reviewExcluded bool
 		var anchors, warnings []string
 		var sourceID *uuid.UUID
-		if err = rows.Scan(&itemID, &requested, &final, &depth, &ordinal, &state, &role, &format, &contentType, &sha, &size, &anchors, &blocks, &warnings, &problem, &attempts, &sourceID, &sourceStatus, &rightsStatus, &indexStatus); err != nil {
+		if err = rows.Scan(&itemID, &requested, &final, &depth, &ordinal, &state, &role, &format, &contentType, &sha, &size, &anchors, &blocks, &warnings, &problem, &attempts, &sourceID, &sourceStatus, &rightsStatus, &indexStatus, &preparationState, &preparationAttempts, &preparationError, &reviewExcluded); err != nil {
 			break
 		}
-		items = append(items, map[string]any{"id": itemID, "requested_url": requested, "final_url": final, "depth": depth, "ordinal": ordinal, "state": state, "role": role, "format": format, "content_type": contentType, "sha256": sha, "byte_size": size, "anchors": anchors, "block_count": blocks, "warnings": warnings, "error": problem, "attempts": attempts, "source_id": sourceID, "source_status": sourceStatus, "rights_status": rightsStatus, "index_status": indexStatus})
+		items = append(items, map[string]any{"id": itemID, "requested_url": requested, "final_url": final, "depth": depth, "ordinal": ordinal, "state": state, "role": role, "format": format, "content_type": contentType, "sha256": sha, "byte_size": size, "anchors": anchors, "block_count": blocks, "warnings": warnings, "error": problem, "attempts": attempts, "source_id": sourceID, "source_status": sourceStatus, "rights_status": rightsStatus, "index_status": indexStatus, "preparation_state": preparationState, "preparation_attempts": preparationAttempts, "preparation_error": preparationError, "review_excluded": reviewExcluded})
 	}
 	rows.Close()
 	if err == nil {
@@ -334,7 +335,7 @@ func (a *API) importCollectionItem(w http.ResponseWriter, r *http.Request) {
 		fail(w, 422, err.Error())
 		return
 	}
-	_, err = a.Store.DB.Exec(r.Context(), `UPDATE collection_items SET source_id=$2 WHERE id=$1 AND source_id IS NULL`, itemID, id)
+	_, err = a.Store.DB.Exec(r.Context(), `UPDATE collection_items SET source_id=$2,preparation_state='done',preparation_error='',preparation_lease_until=NULL WHERE id=$1 AND source_id IS NULL`, itemID, id)
 	if err != nil {
 		fail(w, 500, "source imported; retry to link collection item")
 		return
@@ -457,10 +458,14 @@ func (a *API) activateCollection(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "capture has incomplete coverage; acknowledge partial activation")
 		return
 	}
-	var candidates, unready, configCount int
-	err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate'),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND (i.source_id IS NULL OR s.status<>'published' OR s.rights_status<>'allowed' OR s.superseded_at IS NOT NULL OR ir.status<>'ready' OR ai.index_run_id IS NULL)),count(DISTINCT ir.embedding_config_id) FILTER (WHERE i.state='fetched' AND i.role='content_candidate') FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id WHERE i.snapshot_id=$1`, snapshotID).Scan(&candidates, &unready, &configCount)
+	var candidates, unready, configCount, excludedInvalid int
+	err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded AND (i.source_id IS NULL OR s.status<>'published' OR s.rights_status<>'allowed' OR s.superseded_at IS NOT NULL OR ir.status<>'ready' OR ai.index_run_id IS NULL)),count(DISTINCT ir.embedding_config_id) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND i.review_excluded AND (i.source_id IS NULL OR s.status<>'review' OR EXISTS(SELECT 1 FROM document_blocks b WHERE b.processing_revision_id=s.current_revision_id AND b.review_status IN ('accepted','corrected','pending')))) FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id WHERE i.snapshot_id=$1`, snapshotID).Scan(&candidates, &unready, &configCount, &excludedInvalid)
 	if err != nil {
 		fail(w, 500, "could not verify collection readiness")
+		return
+	}
+	if excludedInvalid > 0 {
+		fail(w, 409, "an excluded page still has pending or retained text; reopen the book editor")
 		return
 	}
 	if candidates == 0 || unready > 0 || configCount != 1 {
@@ -477,9 +482,20 @@ func (a *API) activateCollection(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "unresolved collection items require partial activation acknowledgement")
 		return
 	}
+	var previousID *uuid.UUID
+	if err = tx.QueryRow(r.Context(), `SELECT snapshot_id FROM active_collection_snapshots WHERE collection_id=$1 FOR UPDATE`, id).Scan(&previousID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		fail(w, 500, "could not read active collection")
+		return
+	}
 	_, err = tx.Exec(r.Context(), `INSERT INTO active_collection_snapshots(collection_id,snapshot_id) VALUES($1,$2) ON CONFLICT(collection_id) DO UPDATE SET snapshot_id=excluded.snapshot_id,activated_at=now()`, id, snapshotID)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE collection_snapshots SET state='active' WHERE id=$1`, snapshotID)
+	}
+	if err == nil && previousID != nil && *previousID != snapshotID {
+		_, err = tx.Exec(r.Context(), `UPDATE collection_snapshots SET state='review' WHERE id=$1`, *previousID)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO collection_activation_decisions(id,collection_id,snapshot_id,previous_snapshot_id,actor_principal_id,rationale,partial) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.New(), id, snapshotID, previousID, requestPrincipal(r.Context()).ID, strings.TrimSpace(b.Rationale), len(reasons) > 0 || unresolved > 0)
 	}
 	if err == nil {
 		err = tx.Commit(r.Context())

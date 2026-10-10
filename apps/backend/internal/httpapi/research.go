@@ -20,6 +20,7 @@ import (
 )
 
 type hit struct {
+	RemedyContext                       string
 	ID                                  uuid.UUID
 	SourceID                            uuid.UUID
 	Text, Title, Author, Page, ImageURL string
@@ -235,7 +236,7 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "could not read search record")
 		return
 	}
-	candidateRows, err := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,c.id,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,left(c.text_exact,500),EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' ORDER BY ac.ordinal`, id)
+	candidateRows, err := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,c.id,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,left(c.text_exact,500),ac.remedy_context,EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text' ORDER BY ac.ordinal`, id)
 	if err != nil {
 		fail(w, 500, "could not read evidence record")
 		return
@@ -244,14 +245,14 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 	for candidateRows.Next() {
 		var chunkID uuid.UUID
 		var rank, scan int
-		var title, author, page, imageURL, preview string
+		var title, author, page, imageURL, preview, remedyContext string
 		var cited bool
-		if err = candidateRows.Scan(&rank, &chunkID, &title, &author, &page, &scan, &imageURL, &preview, &cited); err != nil {
+		if err = candidateRows.Scan(&rank, &chunkID, &title, &author, &page, &scan, &imageURL, &preview, &remedyContext, &cited); err != nil {
 			candidateRows.Close()
 			fail(w, 500, "could not read evidence record")
 			return
 		}
-		evidence = append(evidence, map[string]any{"rank": rank, "chunk_id": chunkID, "title": title, "author": author, "printed_page": page, "scan_position": scan, "image_url": imageURL, "literature_categories": categoryByChunk[chunkID.String()].Categories, "evidence_category": categoryByChunk[chunkID.String()].EvidenceCategory, "preview": preview, "cited": cited})
+		evidence = append(evidence, map[string]any{"rank": rank, "chunk_id": chunkID, "title": title, "author": author, "printed_page": page, "scan_position": scan, "image_url": imageURL, "literature_categories": categoryByChunk[chunkID.String()].Categories, "evidence_category": categoryByChunk[chunkID.String()].EvidenceCategory, "preview": preview, "remedy_context": remedyContext, "cited": cited})
 	}
 	err = candidateRows.Err()
 	candidateRows.Close()
@@ -314,7 +315,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	var runID, configID uuid.UUID
 	var modelID, modelRevision string
 	var modelDimensions int
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id,ec.model_revision,ec.dimensions FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) AND (cardinality($2::text[])=0 OR EXISTS(SELECT 1 FROM evidence_categories cat WHERE cat.source_id=s.id AND cat.categories && $2::text[])) ORDER BY s.created_at LIMIT 1`, selected, body.Categories).Scan(&runID, &configID, &modelID, &modelRevision, &modelDimensions)
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT ir.id,ir.embedding_config_id,ec.model_id,ec.model_revision,ec.dimensions FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN embedding_configs ec ON ec.id=ir.embedding_config_id JOIN sources s ON s.id=ai.source_id WHERE s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND (cardinality($1::uuid[])=0 OR s.id=ANY($1::uuid[])) AND (cardinality($2::text[])=0 OR EXISTS(SELECT 1 FROM evidence_categories cat WHERE cat.source_id=s.id AND cat.categories && $2::text[])) ORDER BY s.created_at LIMIT 1`, selected, body.Categories).Scan(&runID, &configID, &modelID, &modelRevision, &modelDimensions)
 	if err != nil {
 		if len(body.Categories) > 0 {
 			fail(w, 409, "No READY passages match the selected literature categories and sources.")
@@ -329,7 +330,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(selected) > 0 {
 		var readyCount int
-		err = a.Store.DB.QueryRow(r.Context(), `SELECT count(DISTINCT s.id) FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE s.id=ANY($1::uuid[]) AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND ir.embedding_config_id=$2`, selected, configID).Scan(&readyCount)
+		err = a.Store.DB.QueryRow(r.Context(), `SELECT count(DISTINCT s.id) FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE s.id=ANY($1::uuid[]) AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND ir.embedding_config_id=$2`, selected, configID).Scan(&readyCount)
 		if err != nil {
 			fail(w, 500, "Could not check selected sources.")
 			return
@@ -376,7 +377,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	for _, scope := range scopes {
 		if scope != "" {
 			var ready bool
-			err = a.Store.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE (s.source_key LIKE $1||'-%' OR s.author ILIKE '%'||$1||'%' OR s.title ILIKE '%'||$1||'%') AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND ir.embedding_config_id=$2)`, scope, configID).Scan(&ready)
+			err = a.Store.DB.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE (s.source_key LIKE $1||'-%' OR s.author ILIKE '%'||$1||'%' OR s.title ILIKE '%'||$1||'%') AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND ir.embedding_config_id=$2)`, scope, configID).Scan(&ready)
 			if err != nil {
 				fail(w, 500, "Could not check source preparation.")
 				return
@@ -464,7 +465,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 				return ", printed page " + h.Page
 			}
 			return ""
-		}(), h.Text)
+		}(), promptPassage(h))
 	}
 	var draft struct {
 		Answer    string
@@ -608,7 +609,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for i, h := range evidence {
-		if _, err = tx.Exec(r.Context(), `INSERT INTO answer_candidates(answer_id,ordinal,chunk_id,retrieval_score) VALUES($1,$2,$3,$4)`, answerID, i+1, h.ID, h.Score); err != nil {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO answer_candidates(answer_id,ordinal,chunk_id,retrieval_score,remedy_context) VALUES($1,$2,$3,$4,$5)`, answerID, i+1, h.ID, h.Score, h.RemedyContext); err != nil {
 			fail(w, 500, "Could not save evidence record.")
 			return
 		}
@@ -619,7 +620,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seenSources[h.SourceID] = true
-		tag, saveErr := tx.Exec(r.Context(), `INSERT INTO answer_index_runs(answer_id,index_run_id) SELECT $1,ir.id FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN sources s ON s.id=ai.source_id WHERE s.id=$2 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND ir.embedding_config_id=$3`, answerID, h.SourceID, configID)
+		tag, saveErr := tx.Exec(r.Context(), `INSERT INTO answer_index_runs(answer_id,index_run_id) SELECT $1,ir.id FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN sources s ON s.id=ai.source_id WHERE s.id=$2 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND ir.embedding_config_id=$3`, answerID, h.SourceID, configID)
 		if saveErr != nil || tag.RowsAffected() != 1 {
 			fail(w, 409, "A cited source is no longer prepared and allowed.")
 			return
@@ -722,7 +723,7 @@ func verifyClaimSentencesDetailed(ctx context.Context, question, answer string, 
 				_, exists := cited[label]
 				if label == "E"+match[1] && !exists {
 					cited[label] = h
-					fmt.Fprintf(&passages, "[E%d] %s\n", i+1, h.Text)
+					fmt.Fprintf(&passages, "[E%d] %s\n", i+1, promptPassage(h))
 				}
 			}
 		}
@@ -767,14 +768,14 @@ func verifyClaimSentencesDetailed(ctx context.Context, question, answer string, 
 			seenQuotes[label] = true
 			excerpt := string([]rune(h.Text)[start:end])
 			checkRecord.Supports = append(checkRecord.Supports, claimSupport{ChunkID: h.ID, Label: label, Start: start, End: end, Text: excerpt})
-			fmt.Fprintf(&quoted, "[%s] %s\n", label, excerpt)
+			fmt.Fprintf(&quoted, "[%s] %s\nSource-entry identity context: %s\n", label, excerpt, h.RemedyContext)
 		}
 		if len(seenQuotes) != len(cited) {
 			rejected++
 			checks = append(checks, checkRecord)
 			continue
 		}
-		focus, err := chat(ctx, "Judge the entire claim against only the exact source quotations below. Both conditions must hold: every factual part is supported by the quotations, and the claim directly answers the question. A quotation about a named remedy but a different symptom does not support a claim about the question's symptom. Check negation, comparison direction, and named entities. Return only JSON {\"supported\":true,\"relevant\":true} or false values.", "Question: "+question+"\nClaim: "+sentence+"\nExact source quotations:\n"+quoted.String())
+		focus, err := chat(ctx, "Judge the entire claim against only the exact source quotations below. Reviewed source-entry identity context may establish the remedy identity but never symptom details. Both conditions must hold: every factual part is supported by the quotations, and the claim directly answers the question. A quotation about a named remedy but a different symptom does not support a claim about the question's symptom. Check negation, comparison direction, and named entities. Return only JSON {\"supported\":true,\"relevant\":true} or false values.", "Question: "+question+"\nClaim: "+sentence+"\nExact source quotations:\n"+quoted.String())
 		if err != nil {
 			return "", nil, 0, nil, err
 		}
@@ -848,7 +849,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 				_, exists := cited[label]
 				if label == "E"+match[1] && !exists {
 					cited[label] = h
-					passages = append(passages, passageInput{ID: label, Text: h.Text})
+					passages = append(passages, passageInput{ID: label, Text: h.Text, Context: h.RemedyContext})
 				}
 			}
 		}
@@ -918,7 +919,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 			if len(context) > 120 {
 				context = context[:120]
 			}
-			quotes = append(quotes, passageInput{ID: passage.ID, Text: excerpt, Context: string(context)})
+			quotes = append(quotes, passageInput{ID: passage.ID, Text: excerpt, Context: h.RemedyContext + string(context)})
 		}
 		if len(quotes) != len(request.Passages) {
 			rejected++
@@ -1144,7 +1145,7 @@ func supplementUnrepresentedSources(ctx context.Context, question, answer string
 		var pack strings.Builder
 		for i, h := range hits {
 			if h.SourceID == source.SourceID {
-				fmt.Fprintf(&pack, "[E%d] %s by %s\n%s\n\n", i+1, h.Title, h.Author, h.Text)
+				fmt.Fprintf(&pack, "[E%d] %s by %s\n%s\n\n", i+1, h.Title, h.Author, promptPassage(h))
 			}
 		}
 		raw, err := chat(ctx, "You are a research guide. Add two or three distinct, concise findings from this author that directly address the user's question. Use only the supplied passages; if they do not directly address the question, return an empty answer. Start each sentence with the author or remedy name, make one narrow claim per sentence, and cite that same sentence inline with [E#]. Do not include uncited introductions, medical advice, or unsupported comparisons. Return only JSON {\"answer\":\"...\",\"citations\":[\"E1\"]} with the exact IDs used.", "Question: "+question+"\nAuthor: "+source.Author+"\nPassages:\n"+pack.String())
@@ -1430,7 +1431,7 @@ func evidenceCards(hits, cited []hit) []any {
 		if len(preview) > 500 {
 			preview = preview[:500]
 		}
-		out = append(out, map[string]any{"rank": i + 1, "chunk_id": h.ID, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan, "image_url": h.ImageURL, "literature_categories": h.Categories, "evidence_category": h.EvidenceCategory, "format": h.Format, "preview": string(preview), "cited": used[h.ID]})
+		out = append(out, map[string]any{"rank": i + 1, "chunk_id": h.ID, "title": h.Title, "author": h.Author, "printed_page": h.Page, "scan_position": h.Scan, "image_url": h.ImageURL, "literature_categories": h.Categories, "evidence_category": h.EvidenceCategory, "format": h.Format, "preview": string(preview), "remedy_context": h.RemedyContext, "cited": used[h.ID]})
 	}
 	return out
 }
@@ -1756,7 +1757,7 @@ func (a *API) insufficientWithChecks(w http.ResponseWriter, ctx context.Context,
 		}
 	}
 	for i, h := range candidates {
-		if _, err = tx.Exec(ctx, `INSERT INTO answer_candidates(answer_id,ordinal,chunk_id,retrieval_score) VALUES($1,$2,$3,$4)`, id, i+1, h.ID, h.Score); err != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO answer_candidates(answer_id,ordinal,chunk_id,retrieval_score,remedy_context) VALUES($1,$2,$3,$4,$5)`, id, i+1, h.ID, h.Score, h.RemedyContext); err != nil {
 			fail(w, 500, "Could not save evidence record.")
 			return
 		}
@@ -1815,17 +1816,21 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 	queries := []struct {
 		sql string
 		arg any
-	}{{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id AND ir.embedding_config_id=ce.embedding_config_id JOIN active_indexes ai ON ai.index_run_id=ir.id WHERE ce.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) ORDER BY ce.embedding <=> $2::vector LIMIT 40`, vector}, {`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id JOIN active_indexes ai ON ai.index_run_id=ir.id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex}}
+	}{{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunk_embeddings ce JOIN chunks c ON c.id=ce.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id AND ir.embedding_config_id=ce.embedding_config_id JOIN active_indexes ai ON ai.index_run_id=ir.id WHERE ce.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) ORDER BY ce.embedding <=> $2::vector LIMIT 40`, vector}, {`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN publications pub ON pub.source_id=s.id JOIN index_runs ir ON ir.publication_id=pub.id JOIN active_indexes ai ON ai.index_run_id=ir.id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND p.page_kind='text' AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex}}
+	queries = append(queries, struct {
+		sql string
+		arg any
+	}{mmRetrievalSQL, q})
 	if overviewQuestion(q) {
 		queries = append(queries, struct {
 			sql string
 			arg any
-		}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex})
+		}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, lex})
 		if strings.Contains(strings.ToLower(q), "result") || strings.Contains(strings.ToLower(q), "finding") || strings.Contains(strings.ToLower(q), "conclusion") {
 			queries = append(queries, struct {
 				sql string
 				arg any
-			}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, "result | conclusion | effect | placebo"})
+			}{`SELECT c.id,c.source_id,c.text_exact,s.title,s.author,coalesce(p.printed_label,''),coalesce(p.scan_page_index+1,0),p.image_url,cat.categories,p.format,s.evidence_category FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id JOIN evidence_categories cat ON cat.chunk_id=c.id JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id WHERE ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready' AND p.page_kind='text' AND p.scan_page_index<=1 AND (s.title ILIKE '%review%' OR s.title ILIKE '%trial%' OR s.title ILIKE '%study%' OR s.title ILIKE '%meta-analys%') AND ($3='' OR (s.source_key LIKE $3||'-%' OR s.author ILIKE '%'||$3||'%' OR s.title ILIKE '%'||$3||'%')) AND (cardinality($4::uuid[])=0 OR s.id=ANY($4::uuid[])) AND (cardinality($5::text[])=0 OR cat.categories && $5::text[]) AND c.search_vector @@ to_tsquery('english',$2) ORDER BY ts_rank_cd(c.search_vector,to_tsquery('english',$2)) DESC LIMIT 40`, "result | conclusion | effect | placebo"})
 		}
 	}
 	for _, query := range queries {
@@ -1851,6 +1856,9 @@ func (a *API) retrieve(ctx context.Context, config uuid.UUID, vector, q, scope s
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := a.attachMMContext(ctx, all); err != nil {
+		return nil, err
 	}
 	out := make([]hit, 0, len(all))
 	for _, h := range all {
@@ -1900,7 +1908,7 @@ func (a *API) verifyEvidence(ctx context.Context, hits []hit) error {
 	for _, h := range hits {
 		var exact, raw, storedSHA, format string
 		var start, end int
-		err := a.Store.DB.QueryRow(ctx, `SELECT c.text_exact,p.text_raw,coalesce(p.text_sha256,''),c.start_character,c.end_character,p.format FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE c.id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'`, h.ID).Scan(&exact, &raw, &storedSHA, &start, &end, &format)
+		err := a.Store.DB.QueryRow(ctx, `SELECT c.text_exact,p.text_raw,coalesce(p.text_sha256,''),c.start_character,c.end_character,p.format FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE c.id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND p.page_kind='text'`, h.ID).Scan(&exact, &raw, &storedSHA, &start, &end, &format)
 		if err != nil {
 			return err
 		}

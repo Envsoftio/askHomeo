@@ -50,7 +50,7 @@ func (w *CaptureWorker) Once(ctx context.Context) error {
  WHERE snapshot_id=(SELECT snapshot_id FROM collection_capture_jobs WHERE next_run_at<=now() AND (state='queued' OR (state='running' AND lease_until<now())) ORDER BY next_run_at FOR UPDATE SKIP LOCKED LIMIT 1)
  RETURNING snapshot_id`, claimToken).Scan(&snapshotID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return w.prepareOne(ctx)
 	}
 	if err != nil {
 		return fmt.Errorf("claim collection capture: %w", err)

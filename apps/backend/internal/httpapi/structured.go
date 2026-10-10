@@ -9,6 +9,7 @@ import (
 )
 
 type structuredLocationInput struct {
+	TextSHA256      string     `json:"text_sha256,omitempty"`
 	PageID          *uuid.UUID `json:"page_id"`
 	DocumentBlockID *uuid.UUID `json:"document_block_id"`
 	Start           int        `json:"start_character"`
@@ -163,7 +164,7 @@ func (a *API) reviewStructuredEntry(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(ctx)
 	var sourceID, revisionID uuid.UUID
 	err = tx.QueryRow(ctx, `SELECT e.source_id,e.processing_revision_id FROM structured_entries e JOIN sources s ON s.id=e.source_id
- WHERE e.id=$1 AND e.processing_revision_id=s.current_revision_id AND s.status='review' AND e.review_status='pending' FOR UPDATE OF s,e`, id).Scan(&sourceID, &revisionID)
+ WHERE e.id=$1 AND e.processing_revision_id=s.current_revision_id AND s.status='review' AND s.removed_at IS NULL AND (e.review_status='pending' OR ($2='rejected' AND e.review_status IN ('accepted','corrected'))) FOR UPDATE OF s,e`, id, b.Decision).Scan(&sourceID, &revisionID)
 	if err != nil {
 		fail(w, 409, "entry is unavailable for review")
 		return

@@ -124,3 +124,38 @@ func TestImplicitParagraphEndHasOriginalLocation(t *testing.T) {
 		}
 	}
 }
+
+func TestTextMateriaMedicaHeadingContext(t *testing.T) {
+	raw := []byte("BELLADONNA\n\nMind.— Restless; worse noise.\n\nHead.— Throbbing.\n\nNUX VOMICA\n\nStomach.— Nausea.")
+	got, err := Extract(raw, "text/plain", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Blocks) != 5 {
+		t.Fatalf("blocks: %+v", got.Blocks)
+	}
+	if got.Blocks[0].Kind != "heading" || got.Blocks[1].Kind != "paragraph" || got.Blocks[1].Heading != "BELLADONNA" || got.Blocks[4].Heading != "NUX VOMICA" {
+		t.Fatalf("incorrect context: %+v", got.Blocks)
+	}
+	for _, b := range got.Blocks {
+		if string(raw[b.StartByte:b.EndByte]) != b.Text {
+			t.Fatalf("invalid original span: %+v", b)
+		}
+	}
+}
+
+func TestLegacyMateriaMedicaHeadings(t *testing.T) {
+	raw := []byte(`<p><b>BELLADONNA</b></p><p><strong>Mind.</strong></p><p>Restless; worse noise.</p><p><b>Head.</b> Throbbing.</p><p><b>NUX VOMICA</b></p><p>Stomach symptoms.</p>`)
+	got, err := Extract(raw, "text/html", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Blocks) != 6 || got.Blocks[2].Heading != "BELLADONNA > Mind." || got.Blocks[3].Kind != "paragraph" || got.Blocks[5].Heading != "NUX VOMICA" {
+		t.Fatalf("incorrect legacy headings: %+v", got.Blocks)
+	}
+	for _, b := range got.Blocks {
+		if b.StartByte < 0 || b.EndByte > len(raw) || b.EndByte <= b.StartByte {
+			t.Fatalf("invalid original span: %+v", b)
+		}
+	}
+}

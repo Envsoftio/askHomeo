@@ -103,7 +103,7 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(input.SourceIDs) > 0 {
 		var count int
-		err := a.Store.DB.QueryRow(r.Context(), `SELECT count(*) FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE s.id=ANY($1::uuid[]) AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND ir.status='ready'`, input.SourceIDs).Scan(&count)
+		err := a.Store.DB.QueryRow(r.Context(), `SELECT count(*) FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE s.id=ANY($1::uuid[]) AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND ir.status='ready'`, input.SourceIDs).Scan(&count)
 		if err != nil || count != len(input.SourceIDs) {
 			fail(w, 409, "One or more selected sources are not ready. Refresh sources and try again.")
 			return

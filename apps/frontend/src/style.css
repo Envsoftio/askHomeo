@@ -28,3 +28,4 @@ form{grid-template-columns:minmax(0,1fr)}form>*{min-width:0}input[type=file]{dis
 
 /* Keep the repair editor reachable when a whole book needs verification. */
 .source-review-workspace .page-list{max-height:22rem;overflow-y:auto;padding:.25rem;align-content:start}
+.book-review{margin-top:1rem}.book-review-editor{display:block;width:100%;min-height:32rem;resize:vertical;white-space:pre;font:0.88rem/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}

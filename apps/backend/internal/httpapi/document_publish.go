@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"homeopath-poc/backend/internal/core"
+	"homeopath-poc/backend/internal/passage"
 )
 
 func (a *API) publishDocument(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
@@ -73,13 +75,18 @@ func (a *API) publishDocument(w http.ResponseWriter, r *http.Request, id uuid.UU
 	}
 	passages := 0
 	for _, b := range blocks {
-		for n, span := range documentSpans(b.text, 1800) {
-			_, err = tx.Exec(ctx, `INSERT INTO chunks(id,page_id,document_block_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,NULL,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, uuid.New(), b.id, id, n, span.text, span.start, span.end)
+		spans, splitErr := core.EntryPassages(ctx, tx, b.text, revisionID, nil, &b.id)
+		if splitErr != nil {
+			fail(w, 500, "Could not split reviewed entry passages")
+			return
+		}
+		for n, span := range spans {
+			_, err = tx.Exec(ctx, `INSERT INTO chunks(id,page_id,document_block_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,NULL,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING`, uuid.New(), b.id, id, n, span.Text, span.Start, span.End)
 			if err != nil {
 				fail(w, 500, err.Error())
 				return
 			}
-			_, err = tx.Exec(ctx, `INSERT INTO document_locations(id,source_id,source_asset_id,processing_revision_id,kind,section_key,start_character,end_character) VALUES($1,$2,$3,$4,'text_span',$5,$6,$7) ON CONFLICT DO NOTHING`, uuid.New(), id, assetID, revisionID, b.sectionKey, span.start, span.end)
+			_, err = tx.Exec(ctx, `INSERT INTO document_locations(id,source_id,source_asset_id,processing_revision_id,kind,section_key,start_character,end_character) VALUES($1,$2,$3,$4,'text_span',$5,$6,$7) ON CONFLICT DO NOTHING`, uuid.New(), id, assetID, revisionID, b.sectionKey, span.Start, span.End)
 			if err != nil {
 				fail(w, 500, err.Error())
 				return
@@ -153,33 +160,9 @@ type documentSpan struct {
 }
 
 func documentSpans(text string, maxRunes int) []documentSpan {
-	r := []rune(text)
 	out := []documentSpan{}
-	for start := 0; start < len(r); {
-		end := start + maxRunes
-		if end >= len(r) {
-			end = len(r)
-		} else {
-			for end > start+maxRunes/2 && r[end] != ' ' && r[end] != '\n' {
-				end--
-			}
-			if end == start+maxRunes/2 {
-				end = start + maxRunes
-			}
-		}
-		for start < end && (r[start] == ' ' || r[start] == '\n') {
-			start++
-		}
-		for end > start && (r[end-1] == ' ' || r[end-1] == '\n') {
-			end--
-		}
-		if end > start {
-			out = append(out, documentSpan{start, end, string(r[start:end])})
-		}
-		start = end
-		for start < len(r) && (r[start] == ' ' || r[start] == '\n') {
-			start++
-		}
+	for _, span := range passage.Split(text, maxRunes) {
+		out = append(out, documentSpan{span.Start, span.End, span.Text})
 	}
 	return out
 }

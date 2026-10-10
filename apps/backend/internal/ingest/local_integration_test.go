@@ -61,7 +61,7 @@ func TestManualPDFIngestionIntegration(t *testing.T) {
 	if _, err := part.Write(data); err != nil {
 		t.Fatal(err)
 	}
-	for k, v := range map[string]string{"title": "Test book", "author": "Test author", "edition": "First", "publication_info": "1901", "repository": "Test collection", "rights_statement": "Review required"} {
+	for k, v := range map[string]string{"title": "Test book", "author": "Test author", "edition": "First", "publication_info": "1901", "repository": "Test collection", "rights_statement": "Review required", "literature_categories": "materia_medica"} {
 		if err := form.WriteField(k, v); err != nil {
 			t.Fatal(err)
 		}
@@ -85,6 +85,14 @@ func TestManualPDFIngestionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := upload.SourceID
+	var category, origin string
+	var decisions int
+	if err := store.DB.QueryRow(ctx, `SELECT literature_categories[1],literature_category_origin,(SELECT count(*) FROM literature_category_decisions WHERE source_id=s.id AND origin='manual' AND actor_principal_id IS NOT NULL) FROM sources s WHERE id=$1`, id).Scan(&category, &origin, &decisions); err != nil {
+		t.Fatal(err)
+	}
+	if category != "materia_medica" || origin != "manual" || decisions != 1 {
+		t.Fatalf("intake category missing: %s %s %d", category, origin, decisions)
+	}
 	if err := New(store).once(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +104,13 @@ func TestManualPDFIngestionIntegration(t *testing.T) {
 	}
 	if status != "review" || chunks < 1 || image != "/api/v1/sources/"+id.String()+"/pages/0/image" || len(raw) < 80 {
 		t.Fatalf("status=%s chunks=%d image=%s raw=%q", status, chunks, image, raw)
+	}
+	var invalidSpans int
+	if err := store.DB.QueryRow(ctx, `SELECT count(*) FROM chunks c JOIN pages p ON p.id=c.page_id WHERE c.source_id=$1 AND (c.text_exact<>substring(p.text_raw FROM c.start_character+1 FOR c.end_character-c.start_character) OR length(c.text_exact)>1800)`, id).Scan(&invalidSpans); err != nil {
+		t.Fatal(err)
+	}
+	if invalidSpans != 0 {
+		t.Fatalf("invalid page spans: %d", invalidSpans)
 	}
 	var jobID uuid.UUID
 	if err := store.DB.QueryRow(ctx, `SELECT id FROM jobs WHERE source_id=$1 AND kind='ingest' AND status='done'`, id).Scan(&jobID); err != nil {

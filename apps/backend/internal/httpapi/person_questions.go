@@ -104,7 +104,7 @@ func (a *API) answerPersonQuestion(w http.ResponseWriter, r *http.Request, quest
 }
 
 func (a *API) matchReadyAuthor(ctx context.Context, person string, configID uuid.UUID) (readySource, bool, error) {
-	rows, err := a.Store.DB.Query(ctx, `SELECT s.id,s.title,s.author,s.edition,s.publication_info,s.repository FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE ir.status='ready' AND ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND (cardinality($2::uuid[])=0 OR s.id=ANY($2::uuid[])) ORDER BY s.created_at`, configID, selectedSourcesFromContext(ctx))
+	rows, err := a.Store.DB.Query(ctx, `SELECT s.id,s.title,s.author,s.edition,s.publication_info,s.repository FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE ir.status='ready' AND ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND (cardinality($2::uuid[])=0 OR s.id=ANY($2::uuid[])) ORDER BY s.created_at`, configID, selectedSourcesFromContext(ctx))
 	if err != nil {
 		return readySource{}, false, err
 	}
@@ -127,7 +127,7 @@ func (a *API) authorEvidence(ctx context.Context, sourceID uuid.UUID, surname st
 FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id
 JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
 JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id
-WHERE s.id=$1 AND ir.status='ready' AND ir.embedding_config_id=$3 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'
+WHERE s.id=$1 AND ir.status='ready' AND ir.embedding_config_id=$3 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND p.page_kind='text'
  AND p.scan_page_index<100 AND strpos(lower(c.text_exact),lower($2))>0
 ORDER BY CASE WHEN strpos(lower(c.text_exact),'subject of this sketch')>0 THEN 0 ELSE 1 END,p.scan_page_index,c.start_character LIMIT 1`, sourceID, surname, configID).Scan(&h.ID, &h.SourceID, &h.Text, &h.Title, &h.Author, &h.Page, &h.Scan, &h.ImageURL)
 	if err != nil {

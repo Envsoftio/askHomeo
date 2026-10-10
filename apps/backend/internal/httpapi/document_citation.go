@@ -48,7 +48,7 @@ func (a *API) citationDocument(w http.ResponseWriter, r *http.Request, id uuid.U
 		EvidenceCategory string   `json:"evidence_category"`
 	}
 	_ = json.Unmarshal(snapshot, &label)
-	write(w, 200, map[string]any{"id": id, "chunk_id": chunkID, "source_id": sourceID, "source_asset_id": assetID, "processing_revision_id": revisionID, "publication_id": publicationID, "document_block_id": blockID, "document_location_id": locationID, "format": format, "section_key": sectionKey, "passage": exact, "title": title, "author": author, "literature_categories": label.Categories, "evidence_category": label.EvidenceCategory, "original_text": original, "reader_text": reviewed, "start_character": start, "end_character": end, "original_url": sourceURL, "document_url": "/api/v1/sources/" + sourceID.String() + "/document/" + revisionID.String() + "/raw"})
+	write(w, 200, map[string]any{"id": id, "chunk_id": chunkID, "source_id": sourceID, "source_asset_id": assetID, "asset_sha256": sha, "processing_revision_id": revisionID, "publication_id": publicationID, "document_block_id": blockID, "document_location_id": locationID, "format": format, "section_key": sectionKey, "passage": exact, "title": title, "author": author, "literature_categories": label.Categories, "evidence_category": label.EvidenceCategory, "original_text": original, "reader_text": reviewed, "start_character": start, "end_character": end, "original_url": sourceURL, "document_url": "/api/v1/sources/" + sourceID.String() + "/document/" + revisionID.String() + "/raw", "reader_url": "/api/v1/sources/" + sourceID.String() + "/document/" + revisionID.String() + "/reader"})
 }
 
 func (a *API) rawDocument(w http.ResponseWriter, r *http.Request) {

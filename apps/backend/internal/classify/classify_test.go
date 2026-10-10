@@ -53,3 +53,18 @@ func TestGenericStructuralClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestMateriaMedicaProfileSections(t *testing.T) {
+	profile := "BELLADONNA\nMind.— Restless.\nHead.— Throbbing.\nSkin.— Hot.\nRelationship.— Compare related preparations."
+	if got := Suggest(profile); !reflect.DeepEqual(got.Categories, []string{"materia_medica"}) {
+		t.Fatalf("profile not recognized: %+v", got)
+	}
+	for _, text := range []string{"Mind\nHead\nSkin\nStomach", "Mindful people have headaches and skin irritation. Relationship matters.", "Mind: Abc., Def., Ghi.\nHead: Abc., Def., Ghi.\nSkin: Abc., Def., Ghi.\nRelationship.— Compare."} {
+		got := Suggest(text)
+		for _, category := range got.Categories {
+			if category == "materia_medica" {
+				t.Fatalf("false profile: %+v", got)
+			}
+		}
+	}
+}

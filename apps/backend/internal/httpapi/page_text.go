@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"homeopath-poc/backend/internal/passage"
 	"homeopath-poc/backend/internal/pdfocr"
 )
 
@@ -94,33 +94,13 @@ func (a *API) correctPageText(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `UPDATE pages SET text_raw=$2,text_sha256=$3,text_revision=text_revision+1,extraction_method='Admin checked transcription',page_kind='text',review_status='reviewed',review_note=$4,text_qa_status='accepted',text_qa_at=now(),text_qa_reason='Administrator corrected and checked text against the original scan',triage_reason='' WHERE id=$1`, id, body.Text, hex.EncodeToString(digest[:]), strings.TrimSpace(body.Note))
 	}
 	if err == nil {
-		runes := []rune(body.Text)
-		index := 0
-		for start := 0; start < len(runes); {
-			for start < len(runes) && unicode.IsSpace(runes[start]) {
-				start++
-			}
-			if start == len(runes) {
-				break
-			}
-			end := start + 700
-			if end >= len(runes) {
-				end = len(runes)
-			} else {
-				for end > start+350 && !unicode.IsSpace(runes[end-1]) {
-					end--
-				}
-			}
-			for end > start && unicode.IsSpace(runes[end-1]) {
-				end--
-			}
-			_, err = tx.Exec(r.Context(), `INSERT INTO chunks(id,page_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.New(), id, sourceID, index, string(runes[start:end]), start, end)
+		for index, span := range passage.Split(body.Text, 1800) {
+			_, err = tx.Exec(r.Context(), `INSERT INTO chunks(id,page_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,$2,$3,$4,$5,$6,$7)`, uuid.New(), id, sourceID, index, span.Text, span.Start, span.End)
 			if err != nil {
 				break
 			}
-			start = end
-			index++
 		}
+
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO page_review_decisions(id,page_id,processing_revision_id,actor_principal_id,previous_kind,decision_kind,rationale) VALUES($1,$2,$3,$4,$5,'text',$6)`, uuid.New(), id, revisionID, requestPrincipal(r.Context()).ID, kind, strings.TrimSpace(body.Note))

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/transform"
+	"homeopath-poc/backend/internal/passage"
 )
 
 const MaxBytes = 10 << 20
@@ -111,6 +112,13 @@ func Extract(raw []byte, contentType, charsetOverride string) (Result, error) {
 		return Result{}, errors.New("document has no substantive text; it may be a JavaScript shell or login page")
 	}
 	return out, nil
+}
+
+// DecodeOriginal exposes the same reviewed charset rules to the inert saved
+// original reader. It does not parse or execute document markup.
+func DecodeOriginal(raw []byte, contentType, charsetOverride string) (string, error) {
+	decoded, _, err := decode(raw, contentType, charsetOverride)
+	return decoded, err
 }
 
 func decode(raw []byte, contentType, override string) (string, string, error) {
@@ -270,6 +278,7 @@ func originalOffset(decoded, charset string, position int, raw []byte) (int, err
 
 func extractText(decoded string, charset string) (Result, error) {
 	result := Result{}
+	heading := ""
 	start := 0
 	for start < len(decoded) {
 		breakAt := paragraphBreak.FindStringIndex(decoded[start:])
@@ -283,6 +292,15 @@ func extractText(decoded string, charset string) (Result, error) {
 			key := fmt.Sprintf("paragraph-%d", len(result.Blocks)+1)
 			left := strings.Index(part, trimmed)
 			block := Block{Key: key, Kind: "paragraph", Text: trimmed, StartByte: start + left, EndByte: start + left + len(trimmed)}
+			label := passage.SectionLabel(trimmed)
+			standalone := label == "" || strings.Trim(strings.TrimSpace(trimmed[len(label):]), ".:—- ") == ""
+			if standalone && passage.Heading(trimmed) && !strings.Contains(trimmed, "\n") && len([]rune(trimmed)) <= 80 {
+				if passage.SectionLabel(trimmed) == "" {
+					heading = trimmed
+				}
+				block.Kind = "heading"
+			}
+			block.Heading = heading
 			result.Blocks = append(result.Blocks, block)
 		}
 		if breakAt == nil {
@@ -328,6 +346,19 @@ func extractHTML(decoded string) (Result, error) {
 			keys[base]++
 			if keys[base] > 1 {
 				current.Key = fmt.Sprintf("%s-%d", base, keys[base])
+			}
+			// Older static books use a bold-only paragraph instead of h1/h2.
+			// Require a standalone label/uppercase heading; inline bold symptoms
+			// remain ordinary prose and never imply remedy grades.
+			if current.Kind == "paragraph" && current.EndByte > current.StartByte && legacyHeading(decoded[current.StartByte:current.EndByte], current.Text) {
+				current.Kind = "heading"
+				headingLevel = 1
+				if passage.SectionLabel(current.Text) != "" {
+					headingLevel = 2
+				}
+				if len(result.Warnings) == 0 {
+					result.Warnings = append(result.Warnings, "Inferred a heading from emphasized text; verify remedy and section boundaries")
+				}
 			}
 			if current.Kind == "heading" {
 				if headingLevel > 0 {

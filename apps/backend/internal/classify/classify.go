@@ -6,11 +6,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"homeopath-poc/backend/internal/passage"
 )
 
-const Version = "literature-rules-v3"
+const Version = "literature-rules-v4"
 
-var rubricSeparator = regexp.MustCompile(`\s+(?:--|—|:)\s*`)
+var rubricSeparator = regexp.MustCompile(`\s*(?:--|—|:)\s*`)
 
 type Evidence struct {
 	Category string `json:"category"`
@@ -81,6 +83,19 @@ func SuggestWithThreshold(content string, threshold int) Suggestion {
 		if shortNames >= 3 {
 			rubricRows++
 		}
+	}
+	// A profile needs several distinct body-system labels plus a modality or
+	// relationship cue. Body headings alone also occur in general textbooks.
+	sections := map[string]bool{}
+	for _, line := range strings.Split(content, "\n") {
+		if label := passage.SectionLabel(line); label != "" {
+			sections[label] = true
+		}
+	}
+	profileCue := sections["modalities"] || sections["aggravation"] || sections["amelioration"] || sections["relationship"] || sections["relationships"]
+	if rubricRows < 3 && len(sections) >= 4 && profileCue {
+		scores["materia_medica"] += 2
+		evidence = append(evidence, Evidence{"materia_medica", "multiple labeled symptom sections"}, Evidence{"materia_medica", "modality or relationship section within a symptom profile"})
 	}
 	if rubricRows >= 3 {
 		scores["repertory"] += 2

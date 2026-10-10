@@ -221,12 +221,12 @@ func (s *Store) PageMap(seed Seed) (PageMap, error) {
 }
 
 // ImportPDF stores an uploaded PDF by checksum before atomically creating its source and job.
-func (s *Store) ImportPDF(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement string) (uuid.UUID, error) {
-	return s.ImportPDFWithOrigin(ctx, input, title, author, edition, publication, repository, sourceURL, rightsStatement, "")
+func (s *Store) ImportPDF(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement string, categories ...IntakeCategory) (uuid.UUID, error) {
+	return s.ImportPDFWithOrigin(ctx, input, title, author, edition, publication, repository, sourceURL, rightsStatement, "", categories...)
 }
 
 // ImportPDFWithOrigin also records the exact remote PDF URL used for acquisition.
-func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL string) (uuid.UUID, error) {
+func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL string, categories ...IntakeCategory) (uuid.UUID, error) {
 	if sourceURL != "" {
 		u, err := url.Parse(sourceURL)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -325,6 +325,11 @@ func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title,
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11,$12,$13,$14)`, id, "upload-"+id.String(), strings.TrimSpace(title), strings.TrimSpace(author), strings.TrimSpace(sourceURL), stored, sha, n, count+1, strings.TrimSpace(edition), strings.TrimSpace(publication), strings.TrimSpace(repository), strings.TrimSpace(rightsStatement), strings.TrimSpace(pdfOriginURL))
 	if err != nil {
 		return uuid.Nil, err
+	}
+	if len(categories) > 0 {
+		if err = recordIntakeCategory(ctx, tx, id, categories[0]); err != nil {
+			return uuid.Nil, err
+		}
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO jobs(id,source_id,kind,status,current_step,total) VALUES($1,$2,'ingest','queued','Reading PDF pages',$3)`, uuid.New(), id, count)
 	if err != nil {

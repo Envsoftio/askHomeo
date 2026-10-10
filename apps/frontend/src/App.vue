@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue'
 import {api,ApiError,type Citation,type Page,type Source} from './api'
+import MateriaMedicaReview from './components/MateriaMedicaReview.vue'
 import SourceLibrary, {type LibraryGroup} from './components/SourceLibrary.vue'
 
 type SourceDetail=Source&{document_blocks:number,document_blocks_reviewed:number,requested_url:string,final_url:string,transport:string,acquired_at:string,pdf_sha256:string,pages_reviewed:number,unclassified_pages:number,missing_text_pages:number,suspect_text_pages:number,text_pages_checked:number,text_pages_total:number,text_qa_status:string,text_qa_error:string,auto_blank_pages:number,triage_status:string,triage_error:string,triage_completed:number,triage_total:number,review_coverage:{front:boolean,beginning:boolean,middle:boolean,end:boolean},rights_mark:string,rights_evidence_url:string,source_url:string,pdf_origin_url:string,edition:string,publication_info:string,repository:string,rights_statement:string,retraction_notice_url:string,edition_id:string,source_record_id:string,source_asset_id:string,processing_revision_id:string,published_revision_id:string|null,rights_decision_id:string|null,suggested_categories:string[],classification_state:string,classification_reason:string,classifier_version:string,literature_category_origin:string}
@@ -33,11 +34,14 @@ const previewCharset=ref('')
 const linkPDF=ref(''),linkTitle=ref(''),linkAuthor=ref(''),linkEdition=ref(''),linkPublication=ref(''),linkRepository=ref(''),linkSourceURL=ref(''),linkRights=ref(''),linkNotice=ref('')
 type CollectionManifest={entries:{url:string,final_url?:string,depth:number,state:string,role?:string,format?:string,byte_size?:number,sha256?:string,block_count?:number,excluded_blocks?:number,suggested_categories?:string[],classification_reason?:string,charset?:string,sample?:string,anchors?:string[],warnings?:string[],error?:string}[],links:{from:string,to:string,fragment?:string,text?:string,relation:string,state:string}[],fetched:number,failed:number,total_bytes:number,complete:boolean,limit_reasons:string[]}
 const collectionSeed=ref(''),collectionHosts=ref(''),collectionPaths=ref(''),collectionMaxDocs=ref(50),collectionMaxDepth=ref(3),collectionBusy=ref(false),collectionError=ref(''),collectionManifest=ref<CollectionManifest|null>(null)
-type CapturedItem={id:string,requested_url:string,final_url:string,state:string,role:string,source_id:string|null,source_status:string,rights_status:string,index_status:string,error:string,attempts:number}
+type CapturedItem={id:string,requested_url:string,final_url:string,state:string,role:string,source_id:string|null,source_status:string,rights_status:string,index_status:string,error:string,attempts:number,preparation_state:string,preparation_attempts:number,preparation_error:string,review_excluded:boolean}
 type CapturedCollection={collection_id:string,snapshot_id:string,title:string,author:string,generation:number,state:string,incomplete_reasons:string[],items:CapturedItem[],active_snapshot_id:string|null,capture_complete:boolean}
 const collectionTitle=ref(''),collectionAuthor=ref(''),collectionEdition=ref(''),collectionRationale=ref(''),collectionCaptureDocs=ref(100),collectionHTTPConsent=ref(false)
 const collectionNeedsHTTPConsent=computed(()=>collectionSeed.value.trim().toLowerCase().startsWith('http://')&&!collectionHTTPConsent.value)
 const capturedCollection=ref<CapturedCollection|null>(null),capturedCollectionID=ref('')
+const collectionReview=ref<{snapshot_id:string,text:string,pages:number,draft_pages:number,blocks:number,pending_blocks:number}|null>(null)
+const collectionReviewDraft=ref(''),collectionReviewNotice=ref(''),collectionReviewBusy=ref(false)
+const collectionRightsStatement=ref(''),collectionRightsNote=ref(''),collectionRightsEvidenceURL=ref(''),collectionPublishBusy=ref(false)
 const collectionLimitReasons=computed(()=>[...new Set(capturedCollection.value?.incomplete_reasons||[])])
 const autoImportCollectionID=ref(window.localStorage.getItem('linked-book-auto-import')||'')
 let collectionWorkKey=''
@@ -301,18 +305,57 @@ async function loadCapturedCollection(){
  try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollectionID.value.trim()))}
  catch(e){collectionError.value=e instanceof Error?e.message:'Could not load collection.'}
  finally{collectionBusy.value=false}
- await prepareCapturedBook()
 }
-async function prepareCapturedBook(){
- const current=capturedCollection.value
- if(!current||current.collection_id!==autoImportCollectionID.value||current.state!=='review')return
- autoImportCollectionID.value=''
- window.localStorage.removeItem('linked-book-auto-import')
- if(!current.capture_complete){
-  collectionError.value='Book capture is incomplete. Check the listed limits or failed pages before preparing sources.'
-  return
- }
- await importCapturedContent()
+async function openCollectionReview(){
+ if(!capturedCollection.value)return
+ collectionReviewBusy.value=true;collectionReviewNotice.value=''
+ try{
+  const result=await api<{snapshot_id:string,text:string,pages:number,draft_pages:number,blocks:number,pending_blocks:number}>('/collections/'+capturedCollection.value.collection_id+'/review-text')
+  collectionReview.value=result;collectionReviewDraft.value=result.text
+ }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not open book text review.'}
+ finally{collectionReviewBusy.value=false}
+}
+async function saveCollectionReview(){
+ if(!capturedCollection.value||!collectionReview.value)return
+ collectionReviewBusy.value=true;collectionReviewNotice.value=''
+ try{
+  const result=await api<{pages:number,retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>('/collections/'+capturedCollection.value.collection_id+'/review-text',{method:'PUT',body:JSON.stringify({snapshot_id:collectionReview.value.snapshot_id,text:collectionReviewDraft.value})})
+  await openCollectionReview();await loadCapturedCollection();await pollSources()
+  collectionReviewNotice.value=`Saved review across ${result.pages} pages: ${result.retained_blocks} retained, ${result.excluded_blocks} excluded, ${result.trimmed_blocks} trimmed. Review rights and publish the retained pages when ready.`
+ }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not save book text review.'}
+ finally{collectionReviewBusy.value=false}
+}
+async function publishReviewedCollection(){
+ const collection=capturedCollection.value,review=collectionReview.value
+ if(!collection||!review)return
+ collectionPublishBusy.value=true;collectionReviewNotice.value=''
+ try{
+  const rights=await api<{source_ids:string[],empty_pages:number}>('/collections/'+collection.collection_id+'/rights',{method:'POST',body:JSON.stringify({snapshot_id:review.snapshot_id,statement:collectionRightsStatement.value.trim(),note:collectionRightsNote.value.trim(),evidence_url:collectionRightsEvidenceURL.value.trim()})})
+  const failures:string[]=[];let queued=0
+  for(const sourceID of rights.source_ids){
+   try{await api('/sources/'+sourceID+'/publish',{method:'POST'});queued++}
+   catch(e){failures.push(sourceID+': '+(e instanceof Error?e.message:'Could not publish'))}
+  }
+  collectionReview.value=null
+  await loadCapturedCollection();await pollSources()
+  collectionReviewNotice.value=`${queued} pages queued for indexing; ${rights.empty_pages} pages with no retained text skipped.`+(failures.length?' Publication failed for '+failures.join('; '):'')
+ }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not approve collection rights.'}
+ finally{collectionPublishBusy.value=false}
+}
+async function retryCollectionPublication(){
+ const collection=capturedCollection.value
+ if(!collection)return
+ collectionPublishBusy.value=true;collectionReviewNotice.value=''
+ const failures:string[]=[];let queued=0
+ try{
+  for(const item of collection.items.filter(item=>item.source_id&&item.source_status==='review'&&item.rights_status==='allowed')){
+   try{await api('/sources/'+item.source_id+'/publish',{method:'POST'});queued++}
+   catch(e){failures.push(item.requested_url+': '+(e instanceof Error?e.message:'Could not publish'))}
+  }
+  await loadCapturedCollection();await pollSources()
+  collectionReviewNotice.value=`${queued} more pages queued for indexing.`+(failures.length?' Still needing attention: '+failures.join('; '):'')
+ }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not refresh publication status.'
+ }finally{collectionPublishBusy.value=false}
 }
 async function startCollectionCapture(){
  collectionBusy.value=true;collectionError.value=''
@@ -343,7 +386,7 @@ async function importCapturedItem(item:CapturedItem){
 async function importCapturedContent(){
  if(!capturedCollection.value)return
  const collection=capturedCollection.value
- const items=collection.items.filter(item=>item.state==='fetched'&&item.role==='content_candidate'&&!item.source_id)
+ const items=collection.items.filter(item=>item.state==='fetched'&&item.role==='content_candidate'&&!item.source_id&&item.preparation_state==='failed')
  collectionBusy.value=true;collectionError.value=''
  const failures:string[]=[]
  try{
@@ -361,7 +404,7 @@ function reviewCapturedItem(item:CapturedItem){
 }
 function importPDFLink(){if(!linkPDF.value.trim())return;linkNotice.value='';run(async()=>{
 	const isDocument=linkPreview.value?.detected_type==='html'||linkPreview.value?.detected_type==='txt'
-	const result=await api<{source_id:string,title:string,author:string}>(isDocument?'/sources/import-document-url':'/sources/import-url',{method:'POST',body:JSON.stringify({[isDocument?'url':'pdf_url']:linkPDF.value.trim(),title:linkTitle.value.trim(),author:linkAuthor.value.trim(),edition:linkEdition.value.trim(),publication_info:linkPublication.value.trim(),repository:linkRepository.value.trim(),source_url:linkSourceURL.value.trim(),rights_statement:linkRights.value.trim(),charset_override:previewCharset.value,allow_https_to_http_redirect:allowHTTPRedirect.value,...(isDocument&&intakeLiteratureCategory.value?{literature_categories:[intakeLiteratureCategory.value]}:{})})})
+	const result=await api<{source_id:string,title:string,author:string}>(isDocument?'/sources/import-document-url':'/sources/import-url',{method:'POST',body:JSON.stringify({[isDocument?'url':'pdf_url']:linkPDF.value.trim(),title:linkTitle.value.trim(),author:linkAuthor.value.trim(),edition:linkEdition.value.trim(),publication_info:linkPublication.value.trim(),repository:linkRepository.value.trim(),source_url:linkSourceURL.value.trim(),rights_statement:linkRights.value.trim(),charset_override:previewCharset.value,allow_https_to_http_redirect:allowHTTPRedirect.value,...(intakeLiteratureCategory.value?{literature_categories:[intakeLiteratureCategory.value]}:{})})})
  linkPDF.value='';linkTitle.value='';linkAuthor.value='';linkEdition.value='';linkPublication.value='';linkRepository.value='';linkSourceURL.value='';linkRights.value='';intakeLiteratureCategory.value=''
  await importedSource(result)
 })}
@@ -375,9 +418,9 @@ function setPDF(file:File|null){
 function pickPDF(event:Event){setPDF((event.target as HTMLInputElement).files?.[0]||null)}
 function dropPDF(event:DragEvent){uploadDragging.value=false;if(busy.value)return;if(event.dataTransfer?.files.length!==1){uploadNotice.value='Add one PDF at a time.';return}setPDF(event.dataTransfer.files[0])}
 function uploadPDF(){if(!uploadFile.value)return;uploadNotice.value='';run(async()=>{
- const form=new FormData();form.set('file',uploadFile.value!);form.set('title',uploadTitle.value.trim());form.set('author',uploadAuthor.value.trim());form.set('edition',uploadEdition.value.trim());form.set('publication_info',uploadPublication.value.trim());form.set('repository',uploadRepository.value.trim());form.set('source_url',uploadURL.value.trim());form.set('rights_statement',uploadRights.value.trim())
+ const form=new FormData();form.set('file',uploadFile.value!);form.set('title',uploadTitle.value.trim());form.set('author',uploadAuthor.value.trim());form.set('edition',uploadEdition.value.trim());form.set('publication_info',uploadPublication.value.trim());form.set('repository',uploadRepository.value.trim());form.set('source_url',uploadURL.value.trim());form.set('rights_statement',uploadRights.value.trim());if(intakeLiteratureCategory.value)form.set('literature_categories',intakeLiteratureCategory.value)
  const result=await api<{source_id:string,title:string,author:string}>('/sources/upload',{method:'POST',body:form});uploadFile.value=null;uploadTitle.value='';uploadAuthor.value='';uploadEdition.value='';uploadPublication.value='';uploadRepository.value='';uploadURL.value='';uploadRights.value='';if(uploadInput.value)uploadInput.value.value=''
- await importedSource(result)
+ intakeLiteratureCategory.value='';await importedSource(result)
 })}
 function uploadDocument(){if(!documentFile.value)return;run(async()=>{
  const form=new FormData();form.set('file',documentFile.value!);form.set('title',uploadTitle.value.trim());form.set('author',uploadAuthor.value.trim());form.set('edition',uploadEdition.value.trim());form.set('publication_info',uploadPublication.value.trim());form.set('repository',uploadRepository.value.trim());form.set('source_url',uploadURL.value.trim());form.set('rights_statement',uploadRights.value.trim());form.set('charset_override',documentCharset.value);if(intakeLiteratureCategory.value)form.set('literature_categories',intakeLiteratureCategory.value)
@@ -475,8 +518,8 @@ async function pollSources(){
  sourcePollInFlight=true
  try{
   await refresh()
-  if(capturedCollection.value && !collectionBusy.value && ['queued','capturing'].includes(capturedCollection.value.state)){
-   try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollection.value.collection_id));await prepareCapturedBook()}
+  if(capturedCollection.value && !collectionBusy.value && (['queued','capturing'].includes(capturedCollection.value.state)||capturedCollection.value.items.some(item=>item.state==='fetched'&&item.role==='content_candidate'&&((!item.source_id&&['pending','running'].includes(item.preparation_state))||(item.source_status==='published'&&!['ready','failed'].includes(item.index_status)))))){
+   try{capturedCollection.value=await api<CapturedCollection>('/collections/'+encodeURIComponent(capturedCollection.value.collection_id))}
    catch(e){collectionError.value=e instanceof Error?e.message:'Could not refresh collection progress.'}
   }
  }finally{
@@ -720,6 +763,11 @@ onUnmounted(()=>{
                     @change="pickPDF" /></label
                 ><small>One PDF at a time · Up to 250 MB</small>
               </div>
+              <label>Literature category at intake<select v-model="intakeLiteratureCategory">
+                <option value="">Let extraction suggest a category</option>
+                <option v-for="value in literatureOptions" :key="value" :value="value">{{ value.replaceAll("_", " ") }}</option>
+              </select></label>
+              <p class="input-hint">For materia medica, check remedy headings, symptom sections and page order during review. Scanned PDFs may need OCR corrections.</p>
               <p v-if="uploadNotice" class="error" role="alert">{{ uploadNotice }}</p>
               <details class="optional-details">
                 <summary>Add source details <span>Optional</span></summary>
@@ -885,7 +933,7 @@ onUnmounted(()=>{
                 </p>
               </div>
               <label
-                v-if="linkPreview && ['html', 'txt'].includes(linkPreview.detected_type)"
+                v-if="linkPreview && ['html', 'txt', 'pdf'].includes(linkPreview.detected_type)"
                 >Literature category at intake<select v-model="intakeLiteratureCategory">
                   <option value="">Let extraction suggest a category</option>
                   <option v-for="value in literatureOptions" :key="value" :value="value">
@@ -1054,21 +1102,42 @@ onUnmounted(()=>{
               <p>{{ capturedCollection.capture_complete ? 'Selected fetch coverage complete; content review remains.' : 'Coverage incomplete or capture/review still in progress.' }}</p>
               <p v-for="reason in collectionLimitReasons" :key="reason" class="error">{{ reason }}</p>
               <p v-if="['review','active'].includes(capturedCollection.state)"><a :href="'/api/v1/collections/'+capturedCollection.collection_id+'/text'" target="_blank" rel="noopener noreferrer">Read all extracted book text with page URLs</a> <span class="input-hint">Review copy; searchable passages still require approval.</span></p>
+              <div v-if="capturedCollection.state==='review'" class="step">
+                <h3>Review book text in one editor</h3>
+                <p class="input-hint">Prepare all content pages first. Then remove unwanted text across the book here. Keep PAGE and BLOCK markers intact. Empty a block to exclude it; trim its beginning or end to retain an exact excerpt. Saving records the decisions for each original page. Rights approval and publication remain separate.</p>
+                <button :disabled="collectionReviewBusy || collectionBusy" @click="openCollectionReview">{{collectionReviewBusy?'Loading…':'Open book text editor'}}</button>
+                <div v-if="collectionReview" class="book-review">
+                  <p>{{collectionReview.pages}} pages · {{collectionReview.draft_pages}} draft pages · {{collectionReview.blocks}} text blocks. Published pages are read only. Original pages stay saved for citations.</p>
+                  <textarea v-model="collectionReviewDraft" class="book-review-editor" aria-label="Edit combined book text" spellcheck="false" />
+                  <div class="actions"><button class="primary-button" :disabled="collectionReviewBusy || collectionReviewDraft===collectionReview.text" @click="saveCollectionReview">{{collectionReviewBusy?'Saving…':'Save book text review'}}</button></div>
+                  <details v-if="collectionReviewDraft===collectionReview.text && collectionReview.pending_blocks===0 && collectionReview.draft_pages>0">
+                    <summary>Approve rights and queue reviewed pages for RAG</summary>
+                    <p>Confirm one rights basis for this book. The app records a separate decision for each retained page, publishes its approved blocks, and queues indexing. Empty pages stay out of answers. Check category suggestions and any extraction warnings before continuing. Bulk publication requires complete capture within the selected scope.</p>
+                    <label>Rights statement<textarea v-model="collectionRightsStatement" rows="2" placeholder="Permission or license covering these saved pages" /></label>
+                    <label>Review reason<textarea v-model="collectionRightsNote" rows="2" placeholder="Why use of this book is allowed" /></label>
+                    <label>Rights evidence URL<input v-model="collectionRightsEvidenceURL" type="url" placeholder="https://…" /></label>
+                    <button class="primary-button" :disabled="collectionPublishBusy || !capturedCollection.capture_complete || !collectionRightsStatement.trim() || !collectionRightsNote.trim()" @click="publishReviewedCollection">{{collectionPublishBusy?'Publishing pages…':'Approve rights and publish retained pages'}}</button>
+                  </details>
+                </div>
+                <p v-if="collectionReviewNotice" role="status">{{collectionReviewNotice}}</p>
+              </div>
               <button :disabled="collectionBusy" @click="loadCapturedCollection">Refresh status</button>
               <button v-if="['failed','cancelled','review'].includes(capturedCollection.state) && !capturedCollection.capture_complete" :disabled="collectionBusy" @click="collectionAction('resume')">Retry failed pages</button>
-              <button v-if="capturedCollection.state === 'review' && capturedCollection.items.some(item => item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id)" :disabled="collectionBusy" @click="importCapturedContent">Prepare remaining pages for review</button>
+              <button v-if="capturedCollection.state === 'review' && capturedCollection.items.some(item => item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id && item.preparation_state==='failed')" :disabled="collectionBusy" @click="importCapturedContent">Retry failed page preparation</button>
+              <button v-if="capturedCollection.items.some(item=>item.source_id&&item.source_status==='review'&&item.rights_status==='allowed')" :disabled="collectionPublishBusy" @click="retryCollectionPublication">Queue approved pages still awaiting publication</button>
+              <button v-if="capturedCollection.state === 'review' && capturedCollection.capture_complete && capturedCollection.items.some(item=>item.state==='fetched'&&item.role==='content_candidate'&&!item.review_excluded) && capturedCollection.items.filter(item=>item.state==='fetched'&&item.role==='content_candidate'&&!item.review_excluded).every(item=>item.source_status==='published'&&item.rights_status==='allowed'&&item.index_status==='ready')" class="primary-button" :disabled="collectionBusy" @click="collectionAction('activate')">Make reviewed collection available for research</button>
               <details><summary>Advanced collection actions</summary>
                 <button v-if="['queued','capturing'].includes(capturedCollection.state)" :disabled="collectionBusy" @click="collectionAction('cancel')">Cancel capture</button>
-                <button v-if="capturedCollection.state === 'review'" :disabled="collectionBusy" @click="collectionAction('activate')">Activate fully reviewed collection</button>
-                <p>Collection activation requires every candidate page to be published and indexed. Each published page can already be searched individually.</p>
+                <p>Activation requires every content page to be published and indexed with a compatible configuration. Older collection pages leave new research when the reviewed snapshot becomes active.</p>
               </details>
               <details><summary>Pages ({{ capturedCollection.items.length }})</summary>
                 <article v-for="item in capturedCollection.items" :key="item.id">
                   <strong>{{ item.state }}</strong> · {{ item.role }} · {{ item.requested_url }}
                   <p v-if="item.error" class="error">{{ item.error }} ({{ item.attempts }} attempts)</p>
-                  <p v-if="item.source_id">Source {{ item.source_id }} · {{ item.source_status }} · rights {{ item.rights_status }} · index {{ item.index_status || 'pending' }}. Review in Sources.</p>
+                  <p v-if="item.state==='fetched'&&item.role==='content_candidate'&&!item.source_id">Preparation: {{item.preparation_state}} <span v-if="item.preparation_error" class="error">{{item.preparation_error}}</span></p>
+                  <p v-if="item.source_id">Source {{ item.source_id }} · {{ item.review_excluded?'excluded from reviewed text':item.source_status }} · rights {{ item.rights_status }} · index {{ item.index_status || 'pending' }}. Review in Sources.</p>
                   <button v-if="item.source_id" :disabled="collectionBusy" @click="reviewCapturedItem(item)">Open source review</button>
-                  <button v-if="capturedCollection.state === 'review' && item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id" :disabled="collectionBusy" @click="importCapturedItem(item)">Import for content review</button>
+                  <button v-if="capturedCollection.state === 'review' && item.state === 'fetched' && item.role === 'content_candidate' && !item.source_id && item.preparation_state==='failed'" :disabled="collectionBusy" @click="importCapturedItem(item)">Retry preparation</button>
                 </article>
               </details>
             </div>
@@ -1367,6 +1436,7 @@ onUnmounted(()=>{
               </div>
             </div>
           </div>
+          <MateriaMedicaReview v-if="session.role==='admin' && detail?.literature_categories.includes('materia_medica') && ['review','published'].includes(active.status)" :source-id="active.id" :status="active.status" />
           <template v-if="detail?.document_format && detail.document_format !== 'pdf'">
             <div class="step">
               <h3>
@@ -2613,6 +2683,15 @@ onUnmounted(()=>{
           <pre>{{citationPart(citation,0,citation.start_character)}}<mark>{{citationPart(citation,citation.start_character||0,citation.end_character)}}</mark>{{citationPart(citation,citation.end_character||0)}}</pre>
           <p v-if="citation.original_text !== citation.reader_text">
             Original extracted text: {{ citation.original_text }}
+          </p>
+          <p>
+            <a
+              v-if="citation.reader_url"
+              :href="citation.reader_url"
+              target="_blank"
+              rel="noreferrer"
+              >View saved original with typography</a
+            >
           </p>
           <p>
             <a

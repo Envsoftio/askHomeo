@@ -106,7 +106,7 @@ func (a *API) crossMentionEvidence(ctx context.Context, sourceID uuid.UUID, othe
 FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id
 JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
 JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id
-WHERE s.id=$1 AND ir.status='ready' AND ir.embedding_config_id=$3 AND s.status='published' AND s.rights_status='allowed' AND p.page_kind='text'
+WHERE s.id=$1 AND ir.status='ready' AND ir.embedding_config_id=$3 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND p.page_kind='text'
  AND strpos(lower(c.text_exact),lower($2))>0 ORDER BY p.scan_page_index,c.start_character LIMIT 80`, sourceID, otherSurname, configID)
 	if err != nil {
 		return hit{}, false, err

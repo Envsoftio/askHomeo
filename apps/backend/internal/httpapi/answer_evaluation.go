@@ -107,7 +107,7 @@ func (a *API) answerEvaluation(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Could not load search trace.")
 			return
 		}
-		candidateRows, queryErr := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,ac.retrieval_score,c.id,s.title,s.author,p.scan_page_index+1,coalesce(p.printed_label,''),left(c.text_exact,500),EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN pages p ON p.id=c.page_id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 ORDER BY ac.ordinal`, answerID)
+		candidateRows, queryErr := a.Store.DB.Query(r.Context(), `SELECT ac.ordinal,ac.retrieval_score,c.id,s.title,s.author,coalesce(p.scan_page_index+1,0),coalesce(p.printed_label,''),left(c.text_exact,500),ac.remedy_context,EXISTS(SELECT 1 FROM answer_citations cite WHERE cite.answer_id=ac.answer_id AND cite.chunk_id=ac.chunk_id) FROM answer_candidates ac JOIN chunks c ON c.id=ac.chunk_id JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id WHERE ac.answer_id=$1 ORDER BY ac.ordinal`, answerID)
 		if queryErr != nil {
 			fail(w, 500, "Could not load retrieved passages.")
 			return
@@ -116,12 +116,12 @@ func (a *API) answerEvaluation(w http.ResponseWriter, r *http.Request) {
 			var ordinal, scan int
 			var score float64
 			var chunkID uuid.UUID
-			var title, author, printedPage, preview string
+			var title, author, printedPage, preview, remedyContext string
 			var cited bool
-			if err = candidateRows.Scan(&ordinal, &score, &chunkID, &title, &author, &scan, &printedPage, &preview, &cited); err != nil {
+			if err = candidateRows.Scan(&ordinal, &score, &chunkID, &title, &author, &scan, &printedPage, &preview, &remedyContext, &cited); err != nil {
 				break
 			}
-			candidates = append(candidates, map[string]any{"rank": ordinal, "score": score, "chunk_id": chunkID, "title": title, "author": author, "scan": scan, "printed_page": printedPage, "preview": preview, "cited": cited})
+			candidates = append(candidates, map[string]any{"rank": ordinal, "score": score, "chunk_id": chunkID, "title": title, "author": author, "scan": scan, "printed_page": printedPage, "preview": preview, "remedy_context": remedyContext, "cited": cited})
 		}
 		if err == nil {
 			err = candidateRows.Err()

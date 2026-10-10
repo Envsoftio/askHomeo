@@ -65,10 +65,13 @@ def validate(dataset, smoke, require_review=False):
     for key, source in sources.items():
         if not isinstance(source, dict):
             raise ValueError(f"Source {key} needs an identity record")
-        sha = source.get("pdf_sha256")
+        source_format = source.get("document_format", "pdf")
+        if source_format not in ("pdf", "html", "txt"):
+            raise ValueError(f"Source {key} has invalid document_format")
+        sha = source.get("pdf_sha256") if source_format == "pdf" else source.get("asset_sha256")
         if not isinstance(sha, str) or len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
-            raise ValueError(f"Source {key} needs a lowercase SHA-256 checksum")
-        for field in ("id", "source_asset_id", "processing_revision_id", "index_run_id"):
+            raise ValueError(f"Source {key} needs a lowercase {source_format} asset SHA-256 checksum")
+        for field in ("id", "source_asset_id", "processing_revision_id", "index_run_id", "collection_snapshot_id"):
             value = source.get(field)
             if value is not None and not valid_uuid(value):
                 raise ValueError(f"Source {key} has invalid {field}")
@@ -135,13 +138,23 @@ def preflight_sources(base, token, dataset, cases):
         if any(not pinned.get(field) for field in ("id", "source_asset_id", "processing_revision_id", "index_run_id")):
             raise ValueError(f"Source {key} is not pinned; complete source review before running jobs")
         source = request(base, token, "/sources/" + pinned["id"])
-        for field in ("id", "pdf_sha256", "source_asset_id", "processing_revision_id"):
+        fields = ("id", "document_format", "source_asset_id", "processing_revision_id")
+        for field in fields:
+            expected = pinned.get(field, "pdf") if field == "document_format" else pinned[field]
+            if source.get(field) != expected:
+                raise ValueError(f"Source {key} {field} drifted: expected {expected}, got {source.get(field)}")
+        hash_field = "pdf_sha256" if pinned.get("document_format", "pdf") == "pdf" else "asset_sha256"
+        for field in (hash_field, "collection_snapshot_id"):
+            if field == "collection_snapshot_id" and not pinned.get(field):
+                continue
             if source.get(field) != pinned[field]:
                 raise ValueError(f"Source {key} {field} drifted: expected {pinned[field]}, got {source.get(field)}")
         if source.get("published_revision_id") != pinned["processing_revision_id"]:
             raise ValueError(f"Source {key} published revision drifted")
         if source.get("status") != "published" or source.get("rights_status") != "allowed" or source.get("superseded"):
             raise ValueError(f"Source {key} is not active, published, and rights allowed")
+        if source.get("retrieval_eligible") is not True:
+            raise ValueError(f"Source {key} is outside the active collection snapshot")
         index = request(base, token, "/sources/" + pinned["id"] + "/index-status")
         if index.get("active_status", "").lower() != "ready" or not index.get("active_matches_config") or index.get("active_run_id") != pinned["index_run_id"] or index.get("active_processing_revision_id") != pinned["processing_revision_id"]:
             raise ValueError(f"Source {key} lacks the pinned, compatible READY index")
@@ -195,7 +208,15 @@ def run_case(base, token, case, selected, source_pins, timeout, checkpoint, prio
         record = request(base, token, "/citations/" + citation["id"])
         citation_records[citation["label"]] = record
         pin = pins_by_id.get(record["source_id"])
-        citation_integrity &= bool(pin) and record["id"] == citation["id"] and record["title"] == citation["title"] and record["author"] == citation["author"] and record["scan_position"] == citation["scan_position"] and record["pdf_sha256"] == pin["pdf_sha256"] and record["source_asset_id"] == pin["source_asset_id"] and record["processing_revision_id"] == pin["processing_revision_id"]
+        if pin:
+            source_format = pin.get("document_format", "pdf")
+            if source_format == "pdf":
+                location_matches = record.get("scan_position") == citation.get("scan_position") and record.get("pdf_sha256") == pin["pdf_sha256"]
+            else:
+                location_matches = record.get("format") == source_format and bool(record.get("document_block_id")) and bool(record.get("section_key")) and record.get("asset_sha256") == pin["asset_sha256"]
+        else:
+            location_matches = False
+        citation_integrity &= bool(pin) and record["id"] == citation["id"] and record["title"] == citation["title"] and record["author"] == citation["author"] and location_matches and record["source_asset_id"] == pin["source_asset_id"] and record["processing_revision_id"] == pin["processing_revision_id"]
     for claim in claims:
         if claim["decision"] != "supported":
             continue

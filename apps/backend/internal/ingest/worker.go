@@ -19,11 +19,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 	"homeopath-poc/backend/internal/core"
 	"homeopath-poc/backend/internal/localllm"
+	"homeopath-poc/backend/internal/passage"
 	"homeopath-poc/backend/internal/pdfocr"
 )
 
@@ -259,7 +259,7 @@ func (w *Worker) recordRevisionTools(ctx context.Context, sourceID uuid.UUID) er
 		}
 		versions[tool.key] = strings.TrimSpace(strings.SplitN(string(output), "\n", 2)[0])
 	}
-	config := map[string]any{"text_extraction": "gs txtwrite", "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": "page-safe-v1"}
+	config := map[string]any{"text_extraction": "gs txtwrite", "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": passage.Version}
 	configBytes, _ := json.Marshal(config)
 	configHash := sha256.Sum256(configBytes)
 	config["processing_config_sha256"] = hex.EncodeToString(configHash[:])
@@ -458,39 +458,13 @@ func (w *Worker) savePage(ctx context.Context, jobID, sourceID uuid.UUID, p core
 	if err != nil {
 		return err
 	}
-	// Unicode code-point offsets refer directly to the immutable OCR transcription.
-	runes := []rune(raw)
-	start := 0
-	index := 0
-	for start < len(runes) {
-		for start < len(runes) && unicode.IsSpace(runes[start]) {
-			start++
-		}
-		if start >= len(runes) {
-			break
-		}
-		end := start + 700
-		if end >= len(runes) {
-			end = len(runes)
-		} else {
-			for end > start+350 && !unicode.IsSpace(runes[end-1]) {
-				end--
-			}
-		}
-		for end > start && unicode.IsSpace(runes[end-1]) {
-			end--
-		}
-		if end <= start {
-			break
-		}
-		exact := string(runes[start:end])
-		_, err = tx.Exec(ctx, `INSERT INTO chunks(id,page_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(page_id,chunk_index) DO NOTHING`, uuid.New(), pageID, sourceID, index, exact, start, end)
+	for index, span := range passage.Split(raw, 1800) {
+		_, err = tx.Exec(ctx, `INSERT INTO chunks(id,page_id,source_id,chunk_index,text_exact,start_character,end_character) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(page_id,chunk_index) DO NOTHING`, uuid.New(), pageID, sourceID, index, span.Text, span.Start, span.End)
 		if err != nil {
 			return err
 		}
-		index++
-		start = end
 	}
+
 	_, err = tx.Exec(ctx, `UPDATE jobs SET completed=(SELECT count(*) FROM pages WHERE source_id=$2 AND scan_page_index>=0)+1,lease_until=now()+interval '90 seconds',updated_at=now() WHERE id=$1`, jobID, sourceID)
 	if err != nil {
 		return err

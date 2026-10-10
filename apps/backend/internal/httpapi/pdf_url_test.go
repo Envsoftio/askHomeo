@@ -23,3 +23,14 @@ func TestImportPDFURLRejectsUnsafeLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestPDFURLCategoryRejectedBeforeFetch(t *testing.T) {
+	api := &API{Token: "test-admin"}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/sources/import-url", strings.NewReader(`{"pdf_url":"https://example.org/book.pdf","literature_categories":["invented"]}`))
+	req.Header.Set("Authorization", "Bearer test-admin")
+	res := httptest.NewRecorder()
+	api.Handler().ServeHTTP(res, req)
+	if res.Code != 400 {
+		t.Fatalf("invalid category: %d %s", res.Code, res.Body.String())
+	}
+}

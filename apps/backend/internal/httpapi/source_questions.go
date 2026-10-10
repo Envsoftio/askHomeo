@@ -128,7 +128,7 @@ func (a *API) findDefinition(ctx context.Context, term string, configID uuid.UUI
 FROM chunks c JOIN evidence_locations p ON p.chunk_id=c.id JOIN sources s ON s.id=c.source_id
 JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
 JOIN chunk_embeddings ce ON ce.chunk_id=c.id AND ce.embedding_config_id=ir.embedding_config_id
-WHERE ir.status='ready' AND ir.embedding_config_id=$2 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND p.page_kind='text'
+WHERE ir.status='ready' AND ir.embedding_config_id=$2 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND p.page_kind='text'
  AND (cardinality($3::uuid[])=0 OR s.id=ANY($3::uuid[])) AND strpos(lower(c.text_exact),lower($1))>0 ORDER BY p.scan_page_index LIMIT 100`, term, configID, selectedSourcesFromContext(ctx))
 	if err != nil {
 		return hit{}, "", err
@@ -218,7 +218,7 @@ func authorLineSupported(author, passage string) bool {
 }
 
 func (a *API) matchReadySource(ctx context.Context, question string, configID uuid.UUID) (readySource, bool, error) {
-	rows, err := a.Store.DB.Query(ctx, `SELECT s.id,s.title,s.author,s.edition,s.publication_info,s.repository FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE ir.status='ready' AND ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND (cardinality($2::uuid[])=0 OR s.id=ANY($2::uuid[])) ORDER BY s.created_at`, configID, selectedSourcesFromContext(ctx))
+	rows, err := a.Store.DB.Query(ctx, `SELECT s.id,s.title,s.author,s.edition,s.publication_info,s.repository FROM sources s JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id WHERE ir.status='ready' AND ir.embedding_config_id=$1 AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id) AND (cardinality($2::uuid[])=0 OR s.id=ANY($2::uuid[])) ORDER BY s.created_at`, configID, selectedSourcesFromContext(ctx))
 	if err != nil {
 		return readySource{}, false, err
 	}
@@ -283,7 +283,7 @@ func (a *API) saveFocusedAnswerHits(w http.ResponseWriter, r *http.Request, ques
 			continue
 		}
 		var activeRun uuid.UUID
-		if err = tx.QueryRow(r.Context(), `SELECT ir.id FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN sources s ON s.id=ai.source_id WHERE s.id=$1 AND ir.embedding_config_id=$2 AND ir.status='ready' AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL`, h.SourceID, configID).Scan(&activeRun); err != nil {
+		if err = tx.QueryRow(r.Context(), `SELECT ir.id FROM active_indexes ai JOIN index_runs ir ON ir.id=ai.index_run_id JOIN sources s ON s.id=ai.source_id WHERE s.id=$1 AND ir.embedding_config_id=$2 AND ir.status='ready' AND s.status='published' AND s.rights_status='allowed' AND s.superseded_at IS NULL AND collection_source_retrieval_eligible(s.id)`, h.SourceID, configID).Scan(&activeRun); err != nil {
 			fail(w, 409, "This source is no longer prepared for questions.")
 			return
 		}
