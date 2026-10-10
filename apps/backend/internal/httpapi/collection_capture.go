@@ -153,7 +153,7 @@ func (a *API) collectionDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	var activeID *uuid.UUID
 	_ = a.Store.DB.QueryRow(r.Context(), `SELECT snapshot_id FROM active_collection_snapshots WHERE collection_id=$1`, id).Scan(&activeID)
-	write(w, 200, map[string]any{"collection_id": id, "title": title, "author": author, "edition": edition, "snapshot_id": snapshotID, "generation": generation, "scope": scope, "state": state, "incomplete_reasons": reasons, "bytes_fetched": total, "items": items, "links": links, "active_snapshot_id": activeID, "capture_complete": state == "review" && len(reasons) == 0})
+	write(w, 200, map[string]any{"collection_id": id, "title": title, "author": author, "edition": edition, "snapshot_id": snapshotID, "generation": generation, "scope": scope, "state": state, "incomplete_reasons": reasons, "bytes_fetched": total, "items": items, "links": links, "active_snapshot_id": activeID, "capture_complete": (state == "review" || state == "active") && len(reasons) == 0})
 }
 
 func (a *API) resumeCollection(w http.ResponseWriter, r *http.Request) {

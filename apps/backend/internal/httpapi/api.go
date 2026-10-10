@@ -89,6 +89,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/collections", a.createCollection)
 	mux.HandleFunc("GET /api/v1/collections/{id}", a.collectionDetail)
 	mux.HandleFunc("GET /api/v1/collections/{id}/text", a.collectionText)
+	mux.HandleFunc("GET /api/v1/collections", a.listCollections)
+	mux.HandleFunc("DELETE /api/v1/collections/{id}/sources", a.deleteCollectionSources)
 	mux.HandleFunc("GET /api/v1/collections/{id}/review-text", a.collectionReviewText)
 	mux.HandleFunc("PUT /api/v1/collections/{id}/review-text", a.saveCollectionReviewText)
 	mux.HandleFunc("POST /api/v1/collections/{id}/rights", a.approveCollectionRights)
@@ -371,7 +373,7 @@ func (a *API) pageImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 func (a *API) sources(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category,s.removed_at IS NOT NULL,source_deletion_blocker(s.id) FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' WHERE (s.removed_at IS NULL OR $1) ORDER BY s.created_at DESC LIMIT 100`, requestRole(r.Context()) == "admin")
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category,s.removed_at IS NOT NULL,source_deletion_blocker(s.id),book.collection_id,coalesce(book.title,''),collection_source_retrieval_eligible(s.id) FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' LEFT JOIN LATERAL (SELECT cs.collection_id,c.title FROM collection_items i JOIN collection_snapshots cs ON cs.id=i.snapshot_id JOIN linked_collections c ON c.id=cs.collection_id WHERE i.source_id=s.id ORDER BY cs.generation DESC LIMIT 1) book ON true WHERE (s.removed_at IS NULL OR $1) ORDER BY s.created_at DESC`, requestRole(r.Context()) == "admin")
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -381,16 +383,17 @@ func (a *API) sources(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id uuid.UUID
 		var supersedes *uuid.UUID
-		var superseded, removed bool
-		var deletionBlocker string
+		var superseded, removed, collectionEligible bool
+		var deletionBlocker, collectionTitle string
+		var collectionID *uuid.UUID
 		var title, author, status, rights, problem, format, evidenceCategory string
 		var categories []string
 		var completed, total int
-		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded, &format, &categories, &evidenceCategory, &removed, &deletionBlocker); err != nil {
+		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded, &format, &categories, &evidenceCategory, &removed, &deletionBlocker, &collectionID, &collectionTitle, &collectionEligible); err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "document_format": format, "literature_categories": categories, "evidence_category": evidenceCategory, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded, "removed": removed, "deletion_blocker": deletionBlocker})
+		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "document_format": format, "literature_categories": categories, "evidence_category": evidenceCategory, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded, "removed": removed, "deletion_blocker": deletionBlocker, "collection_id": collectionID, "collection_title": collectionTitle, "collection_eligible": collectionEligible})
 	}
 	write(w, 200, out)
 }

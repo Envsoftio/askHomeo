@@ -274,7 +274,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		SourceIDs  []uuid.UUID `json:"source_ids"`
 		Categories []string    `json:"literature_categories"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&body) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body) != nil {
 		fail(w, 400, "invalid question")
 		return
 	}
@@ -291,8 +291,8 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "mode must be quick or deep")
 		return
 	}
-	if len(body.SourceIDs) > 50 {
-		fail(w, 400, "Choose at most 50 sources.")
+	if !a.validBookSelectionSize(r, body.SourceIDs) {
+		fail(w, 400, "Choose at most 50 books or standalone sources.")
 		return
 	}
 	if len(body.Categories) > 0 && !validLiteratureCategories(body.Categories) {

@@ -37,6 +37,7 @@ type Scope struct {
 	RequestDelayMillis   int      `json:"request_delay_millis"`
 	AllowHTTPRedirect    bool     `json:"allow_https_to_http_redirect"`
 	AllowUnencryptedHTTP bool     `json:"allow_unencrypted_http"`
+	IncludeLinkedVolumes bool     `json:"include_linked_volumes"`
 }
 
 type Entry struct {
@@ -86,7 +87,16 @@ func (s Scope) Validate() (*url.URL, error) {
 // ValidateCapture permits a larger, resumable selection than an interactive
 // preview while retaining the same exact host/path and transport rules.
 func (s Scope) ValidateCapture() (*url.URL, error) {
-	u, err := s.validateLimits(100<<20, 3600)
+	// Background captures have a durable frontier. Zero means continue until
+	// it is exhausted; individual requests and document sizes remain bounded.
+	validation := s
+	if validation.MaxTotalBytes == 0 {
+		validation.MaxTotalBytes = 1
+	}
+	if validation.MaxDurationSeconds == 0 {
+		validation.MaxDurationSeconds = 1
+	}
+	u, err := validation.validateLimits(100<<20, 3600)
 	if err != nil {
 		return nil, err
 	}
@@ -151,8 +161,30 @@ func (s Scope) AllowURL(u *url.URL) error {
 			(strings.HasSuffix(prefix, "/") && strings.HasPrefix(u.EscapedPath(), prefix)) {
 			return nil
 		}
+		if s.IncludeLinkedVolumes && linkedVolumePath(prefix, u.Path) {
+			return nil
+		}
 	}
 	return errors.New("path is outside collection scope")
+}
+
+// Books are often split across numbered sibling directories (book, book1,
+// book2). Follow only that exact family, never the whole parent directory.
+func linkedVolumePath(prefix, target string) bool {
+	base := strings.TrimSuffix(prefix, "/")
+	if base == "" {
+		return false
+	}
+	stem := strings.TrimRight(path.Base(base), "0123456789")
+	if stem == "" {
+		return false
+	}
+	parent := strings.TrimSuffix(path.Dir(base), "/") + "/"
+	if !strings.HasPrefix(target, parent) {
+		return false
+	}
+	folder, _, hasChild := strings.Cut(strings.TrimPrefix(target, parent), "/")
+	return hasChild && strings.TrimRight(folder, "0123456789") == stem
 }
 
 type queued struct {

@@ -53,7 +53,6 @@ function reset() {search.value = ''; filter.value = 'all';category.value='all'}
       <label>Literature<select v-model="category"><option value="all">All categories</option><option v-for="value in categories" :key="value" :value="value">{{value.replaceAll('_',' ')}}</option></select></label>
       <label>Sort by<select v-model="sort"><option value="recent">Recently added</option><option value="title">Title A–Z</option><option value="author">Author A–Z</option></select></label>
     </div>
-    <p v-if="sources.length>=100" class="listing-limit">Showing the 100 most recently added sources. Search and status filters apply to this list.</p>
     <p v-if="loading&&!sources.length" class="library-empty" role="status">Loading your source library…</p>
     <div v-else-if="!sources.length" class="library-empty"><span class="empty-symbol" aria-hidden="true">＋</span><h3>Build your research library</h3><p>Add a book or paper. We’ll read the pages and show you what needs checking.</p><button v-if="canAdd" class="primary-button" @click="emit('add')">Add your first source</button><p v-else>An administrator can add sources to the shared library.</p></div>
     <div v-else-if="!filtered.length" class="library-empty"><h3>No matching sources</h3><p>Try another title, author or status.</p><button @click="reset">Clear filters</button></div>

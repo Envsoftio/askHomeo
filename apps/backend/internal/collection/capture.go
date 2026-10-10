@@ -100,9 +100,9 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 	if _, err = scope.ValidateCapture(); err != nil {
 		return err
 	}
-	if time.Since(started) > time.Duration(scope.MaxDurationSeconds)*time.Second || total >= scope.MaxTotalBytes {
+	if (scope.MaxDurationSeconds > 0 && time.Since(started) > time.Duration(scope.MaxDurationSeconds)*time.Second) || (scope.MaxTotalBytes > 0 && total >= scope.MaxTotalBytes) {
 		reason := "capture time limit reached"
-		if total >= scope.MaxTotalBytes {
+		if scope.MaxTotalBytes > 0 && total >= scope.MaxTotalBytes {
 			reason = "capture byte limit reached"
 		}
 		return w.finishLimit(ctx, snapshotID, claimToken, reason)
@@ -128,7 +128,7 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 		fetcher = &safefetch.Fetcher{}
 	}
 	limit := int64(document.MaxBytes)
-	if remaining := scope.MaxTotalBytes - total; remaining < limit {
+	if remaining := scope.MaxTotalBytes - total; scope.MaxTotalBytes > 0 && remaining < limit {
 		limit = remaining
 	}
 	allowURL := func(u *url.URL) error {
@@ -200,13 +200,6 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 			return err
 		}
 		for i, link := range links {
-			if i >= 10000 {
-				_, err = tx.Exec(ctx, `UPDATE collection_snapshots SET incomplete_reasons=array_append(incomplete_reasons,'link limit reached') WHERE id=$1`, snapshotID)
-				if err != nil {
-					return err
-				}
-				break
-			}
 			linkState := "queued"
 			u := mustURL(link.To)
 			if scope.AllowURL(u) != nil || (!scope.AllowUnencryptedHTTP && u.Scheme == "http") {

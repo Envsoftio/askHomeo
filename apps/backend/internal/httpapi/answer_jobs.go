@@ -62,7 +62,7 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 		SourceIDs  []uuid.UUID `json:"source_ids"`
 		Categories []string    `json:"literature_categories"`
 	}
-	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192)).Decode(&input) != nil {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil {
 		fail(w, 400, "Invalid question request.")
 		return
 	}
@@ -79,8 +79,8 @@ func (a *API) queueAnswer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Research depth must be quick or deep.")
 		return
 	}
-	if len(input.SourceIDs) > 50 {
-		fail(w, 400, "Choose at most 50 sources.")
+	if !a.validBookSelectionSize(r, input.SourceIDs) {
+		fail(w, 400, "Choose at most 50 books or standalone sources.")
 		return
 	}
 	if input.SourceIDs == nil {

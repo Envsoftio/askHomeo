@@ -34,6 +34,34 @@ func fixtureScope() Scope {
 	return Scope{SeedURL: "https://books.example/book/index.html", AllowedHosts: []string{"books.example"}, AllowedPathPrefixes: []string{"/book/", "/sibling/"}, MaxDocuments: 5, MaxDepth: 3, MaxTotalBytes: 1 << 20, MaxDurationSeconds: 10}
 }
 
+func TestLinkedVolumesStayWithinBookFamily(t *testing.T) {
+	s := fixtureScope()
+	s.AllowedPathPrefixes = []string{"/books/kentrep/"}
+	s.SeedURL = "https://books.example/books/kentrep/index.htm"
+	s.IncludeLinkedVolumes = true
+	s.MaxDocuments, s.MaxDepth, s.MaxTotalBytes, s.MaxDurationSeconds = 0, 0, 0, 0
+	if _, err := s.ValidateCapture(); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/books/kentrep/kent0300.htm", "/books/kentrep1/kent0305.htm", "/books/kentrep3/kent1420.htm"} {
+		u, _ := url.Parse("https://books.example" + target)
+		if err := s.AllowURL(u); err != nil {
+			t.Fatalf("lost linked volume %s: %v", target, err)
+		}
+	}
+	for _, target := range []string{"/books/other/index.htm", "/books/kentrep-ad/index.htm", "/books/kentrep3/../other/index.htm", "/books/kentrep3evil/a.htm", "/books/kentrep3%2fother/a.htm"} {
+		u, _ := url.Parse("https://books.example" + target)
+		if s.AllowURL(u) == nil {
+			t.Fatalf("allowed unrelated/ambiguous page %s", target)
+		}
+	}
+	s.IncludeLinkedVolumes = false
+	u, _ := url.Parse("https://books.example/books/kentrep3/kent1420.htm")
+	if s.AllowURL(u) == nil {
+		t.Fatal("explicit scope was broadened without linked volumes enabled")
+	}
+}
+
 func TestPreviewFollowsSiblingPathsAndRetainsMultipleAnchors(t *testing.T) {
 	f := &fixtureFetcher{pages: map[string]string{
 		"https://books.example/book/index.html":     `<html><body><a href="section.html">Section</a><a href="/outside/a.html">Advertisement</a></body></html>`,

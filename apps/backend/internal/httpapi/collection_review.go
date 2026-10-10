@@ -198,7 +198,7 @@ func (a *API) collectionReviewText(w http.ResponseWriter, r *http.Request) {
 		}
 		pages = append(pages, map[string]any{"url": source.url, "published": source.status == "published", "blocks": pageBlocks})
 	}
-	write(w, 200, map[string]any{"snapshot_id": snapshotID, "text": result, "pages": len(sources), "review_pages": pages, "draft_pages": draftPages, "blocks": blocks, "pending_blocks": pending})
+	write(w, 200, map[string]any{"snapshot_id": snapshotID, "text": result, "plain_text": renderPlainCollectionReview(sources), "pages": len(sources), "review_pages": pages, "draft_pages": draftPages, "blocks": blocks, "pending_blocks": pending})
 }
 
 func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +212,7 @@ func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SnapshotID uuid.UUID `json:"snapshot_id"`
 		Text       string    `json:"text"`
+		PlainText  *string   `json:"plain_text"`
 		Edits      *[]struct {
 			ID   uuid.UUID `json:"id"`
 			Text string    `json:"text"`
@@ -221,7 +222,7 @@ func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid book review text")
 		return
 	}
-	if len(body.Text) > maxCollectionReviewBytes {
+	if len(body.Text) > maxCollectionReviewBytes || (body.PlainText != nil && len(*body.PlainText) > maxCollectionReviewBytes) {
 		fail(w, 400, "book text exceeds the editor limit")
 		return
 	}
@@ -241,7 +242,9 @@ func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var texts []string
-	if body.Edits != nil {
+	if body.PlainText != nil {
+		texts, err = parsePlainCollectionReview(*body.PlainText, sources)
+	} else if body.Edits != nil {
 		position := 0
 		for _, source := range sources {
 			for _, block := range source.blocks {
