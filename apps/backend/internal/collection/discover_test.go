@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -89,6 +90,27 @@ func TestPreviewReportsLimitsAndFailedTargets(t *testing.T) {
 	}
 	if m.Complete || m.Failed != 1 {
 		t.Fatalf("missing target treated as complete: %+v", m)
+	}
+}
+
+func TestPreviewFollowsMoreThanOneHundredPagesBeyondFiveLevels(t *testing.T) {
+	const count = 110
+	pages := make(map[string]string, count)
+	for i := 0; i < count; i++ {
+		url := "https://books.example/book/page" + strconv.Itoa(i) + ".html"
+		body := "<html><body><p>Book content</p>"
+		if i+1 < count {
+			body += `<a href="page` + strconv.Itoa(i+1) + `.html">Next</a>`
+		}
+		pages[url] = body + "</body></html>"
+	}
+	f := &fixtureFetcher{pages: pages}
+	s := fixtureScope()
+	s.SeedURL = "https://books.example/book/page0.html"
+	s.MaxDocuments, s.MaxDepth = 0, 0
+	m, err := Preview(context.Background(), s, f)
+	if err != nil || !m.Complete || m.Fetched != count || len(f.calls) != count {
+		t.Fatalf("in-scope chain was truncated: fetched=%d calls=%d reasons=%v err=%v", m.Fetched, len(f.calls), m.LimitReasons, err)
 	}
 }
 

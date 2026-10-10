@@ -80,13 +80,13 @@ type Manifest struct {
 }
 
 func (s Scope) Validate() (*url.URL, error) {
-	return s.validateLimits(100, 30<<20, 180)
+	return s.validateLimits(30<<20, 180)
 }
 
 // ValidateCapture permits a larger, resumable selection than an interactive
 // preview while retaining the same exact host/path and transport rules.
 func (s Scope) ValidateCapture() (*url.URL, error) {
-	u, err := s.validateLimits(100, 100<<20, 3600)
+	u, err := s.validateLimits(100<<20, 3600)
 	if err != nil {
 		return nil, err
 	}
@@ -96,15 +96,15 @@ func (s Scope) ValidateCapture() (*url.URL, error) {
 	return u, nil
 }
 
-func (s Scope) validateLimits(maxDocuments int, maxBytes int64, maxSeconds int) (*url.URL, error) {
+func (s Scope) validateLimits(maxBytes int64, maxSeconds int) (*url.URL, error) {
 	u, err := url.Parse(s.SeedURL)
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.Fragment != "" || u.User != nil {
 		return nil, errors.New("seed must be a public HTTP or HTTPS document URL without credentials or fragment")
 	}
-	if len(s.AllowedHosts) == 0 || len(s.AllowedPathPrefixes) == 0 || s.MaxDocuments < 1 || s.MaxDocuments > maxDocuments ||
-		s.MaxDepth < 0 || s.MaxDepth > 5 || s.MaxTotalBytes < 1 || s.MaxTotalBytes > maxBytes ||
+	if len(s.AllowedHosts) == 0 || len(s.AllowedPathPrefixes) == 0 || s.MaxDocuments < 0 ||
+		s.MaxDepth < 0 || s.MaxTotalBytes < 1 || s.MaxTotalBytes > maxBytes ||
 		s.MaxDurationSeconds < 1 || s.MaxDurationSeconds > maxSeconds || s.RequestDelayMillis < 0 || s.RequestDelayMillis > 5000 {
-		return nil, errors.New("collection scope needs explicit hosts/paths and bounded document, depth, byte, time and delay limits")
+		return nil, errors.New("collection scope needs explicit hosts/paths and valid document, depth, byte, time and delay limits")
 	}
 	for _, host := range s.AllowedHosts {
 		if host == "" || strings.ContainsAny(host, "/:@*?#") || strings.ToLower(host) != host {
@@ -181,7 +181,7 @@ previewLoop:
 			manifest.LimitReasons = appendUnique(manifest.LimitReasons, "time limit reached")
 			break
 		}
-		if len(manifest.Entries) >= s.MaxDocuments {
+		if s.MaxDocuments > 0 && len(manifest.Entries) >= s.MaxDocuments {
 			manifest.LimitReasons = appendUnique(manifest.LimitReasons, "document limit reached")
 			break
 		}
@@ -257,10 +257,10 @@ previewLoop:
 					link.State = "excluded_scope"
 				} else if seen[link.To] {
 					link.State = "duplicate_or_cycle"
-				} else if item.depth >= s.MaxDepth {
+				} else if s.MaxDepth > 0 && item.depth >= s.MaxDepth {
 					link.State = "excluded_depth"
 					manifest.LimitReasons = appendUnique(manifest.LimitReasons, "depth limit reached")
-				} else if len(seen) >= s.MaxDocuments {
+				} else if s.MaxDocuments > 0 && len(seen) >= s.MaxDocuments {
 					link.State = "excluded_document_limit"
 					manifest.LimitReasons = appendUnique(manifest.LimitReasons, "document limit reached")
 				} else {

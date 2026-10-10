@@ -39,14 +39,16 @@ const linkPreview=ref<URLPreview|null>(null),previewError=ref(''),previewBusy=re
 const previewCharset=ref('')
 const linkPDF=ref(''),linkTitle=ref(''),linkAuthor=ref(''),linkEdition=ref(''),linkPublication=ref(''),linkRepository=ref(''),linkSourceURL=ref(''),linkRights=ref(''),linkNotice=ref('')
 type CollectionManifest={entries:{url:string,final_url?:string,depth:number,state:string,role?:string,format?:string,byte_size?:number,sha256?:string,block_count?:number,excluded_blocks?:number,suggested_categories?:string[],classification_reason?:string,charset?:string,sample?:string,anchors?:string[],warnings?:string[],error?:string}[],links:{from:string,to:string,fragment?:string,text?:string,relation:string,state:string}[],fetched:number,failed:number,total_bytes:number,complete:boolean,limit_reasons:string[]}
-const collectionSeed=ref(''),collectionHosts=ref(''),collectionPaths=ref(''),collectionMaxDocs=ref(50),collectionMaxDepth=ref(3),collectionBusy=ref(false),collectionError=ref(''),collectionManifest=ref<CollectionManifest|null>(null)
+const collectionSeed=ref(''),collectionHosts=ref(''),collectionPaths=ref(''),collectionMaxDocs=ref(0),collectionMaxDepth=ref(0),collectionBusy=ref(false),collectionError=ref(''),collectionManifest=ref<CollectionManifest|null>(null)
 type CapturedItem={id:string,requested_url:string,final_url:string,state:string,role:string,source_id:string|null,source_status:string,rights_status:string,index_status:string,error:string,attempts:number,preparation_state:string,preparation_attempts:number,preparation_error:string,review_excluded:boolean}
-type CapturedCollection={collection_id:string,snapshot_id:string,title:string,author:string,generation:number,state:string,incomplete_reasons:string[],items:CapturedItem[],active_snapshot_id:string|null,capture_complete:boolean}
-const collectionTitle=ref(''),collectionAuthor=ref(''),collectionEdition=ref(''),collectionRationale=ref(''),collectionCaptureDocs=ref(100),collectionHTTPConsent=ref(false)
+type CapturedCollection={collection_id:string,snapshot_id:string,title:string,author:string,generation:number,state:string,incomplete_reasons:string[],scope:{seed_url:string,allowed_hosts:string[],allowed_path_prefixes:string[],max_documents:number,max_depth:number,max_total_bytes:number,max_duration_seconds:number,request_delay_millis:number,allow_https_to_http_redirect:boolean,allow_unencrypted_http:boolean},items:CapturedItem[],active_snapshot_id:string|null,capture_complete:boolean}
+const collectionTitle=ref(''),collectionAuthor=ref(''),collectionEdition=ref(''),collectionRationale=ref(''),collectionCaptureDocs=ref(0),collectionHTTPConsent=ref(false)
 const collectionNeedsHTTPConsent=computed(()=>collectionSeed.value.trim().toLowerCase().startsWith('http://')&&!collectionHTTPConsent.value)
 const capturedCollection=ref<CapturedCollection|null>(null),capturedCollectionID=ref('')
-const collectionReview=ref<{snapshot_id:string,text:string,pages:number,draft_pages:number,blocks:number,pending_blocks:number}|null>(null)
-const collectionReviewDraft=ref(''),collectionReviewNotice=ref(''),collectionReviewBusy=ref(false)
+type BookReview={snapshot_id:string,text:string,pages:number,review_pages:{url:string,published:boolean,blocks:{id:string,text:string}[]}[],draft_pages:number,blocks:number,pending_blocks:number}
+const collectionReview=ref<BookReview|null>(null)
+const collectionReviewEdits=ref<{id:string,text:string}[]>([]),collectionReviewNotice=ref(''),collectionReviewBusy=ref(false)
+const collectionReviewChanged=computed(()=>collectionReview.value?.review_pages.flatMap(page=>page.blocks).some((block,index)=>block.text!==collectionReviewEdits.value[index]?.text)??false)
 const collectionRightsStatement=ref(''),collectionRightsNote=ref(''),collectionRightsEvidenceURL=ref(''),collectionPublishBusy=ref(false)
 const collectionLimitReasons=computed(()=>[...new Set(capturedCollection.value?.incomplete_reasons||[])])
 const autoImportCollectionID=ref(window.localStorage.getItem('linked-book-auto-import')||'')
@@ -66,9 +68,9 @@ watch(collectionSeed,(value)=>{
    collectionAuthor.value=''
    collectionEdition.value=''
    collectionRationale.value=''
-   collectionMaxDocs.value=50
-   collectionMaxDepth.value=3
-   collectionCaptureDocs.value=100
+   collectionMaxDocs.value=0
+   collectionMaxDepth.value=0
+   collectionCaptureDocs.value=0
    collectionHTTPConsent.value=false
    capturedCollection.value=null
    capturedCollectionID.value=''
@@ -315,12 +317,27 @@ async function loadCapturedCollection(){
  catch(e){collectionError.value=e instanceof Error?e.message:'Could not load collection.'}
  finally{collectionBusy.value=false}
 }
+async function refreshCollectionWithoutPageLimits(){
+ const collection=capturedCollection.value
+ if(!collection)return
+ collectionBusy.value=true;collectionError.value=''
+ try{
+  await api('/collections/'+collection.collection_id+'/refresh',{method:'POST',body:JSON.stringify({rationale:'Follow all linked pages within the selected book scope without document or depth limits.',scope:{...collection.scope,max_documents:0,max_depth:0}})})
+  collectionReview.value=null
+  await loadCapturedCollection()
+ }catch(e){collectionError.value=e instanceof Error?e.message:'Could not refresh book capture.'}
+ finally{collectionBusy.value=false}
+}
 async function openCollectionReview(){
  if(!capturedCollection.value)return
  collectionReviewBusy.value=true;collectionReviewNotice.value=''
  try{
-  const result=await api<{snapshot_id:string,text:string,pages:number,draft_pages:number,blocks:number,pending_blocks:number}>('/collections/'+capturedCollection.value.collection_id+'/review-text')
-  collectionReview.value=result;collectionReviewDraft.value=result.text
+  await loadCapturedCollection()
+  if(!capturedCollection.value)return
+  const result=await api<BookReview>('/collections/'+capturedCollection.value.collection_id+'/review-text')
+  collectionReview.value=result;collectionReviewEdits.value=result.review_pages.flatMap(page=>page.blocks.map(block=>({...block})))
+  await nextTick()
+  document.querySelector<HTMLTextAreaElement>('.book-review-editor')?.focus()
  }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not open book text review.'}
  finally{collectionReviewBusy.value=false}
 }
@@ -328,7 +345,7 @@ async function saveCollectionReview(){
  if(!capturedCollection.value||!collectionReview.value)return
  collectionReviewBusy.value=true;collectionReviewNotice.value=''
  try{
-  const result=await api<{pages:number,retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>('/collections/'+capturedCollection.value.collection_id+'/review-text',{method:'PUT',body:JSON.stringify({snapshot_id:collectionReview.value.snapshot_id,text:collectionReviewDraft.value})})
+  const result=await api<{pages:number,retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>('/collections/'+capturedCollection.value.collection_id+'/review-text',{method:'PUT',body:JSON.stringify({snapshot_id:collectionReview.value.snapshot_id,edits:collectionReviewEdits.value})})
   await openCollectionReview();await loadCapturedCollection();await pollSources()
   collectionReviewNotice.value=`Saved review across ${result.pages} pages: ${result.retained_blocks} retained, ${result.excluded_blocks} excluded, ${result.trimmed_blocks} trimmed. Review rights and publish the retained pages when ready.`
  }catch(e){collectionReviewNotice.value=e instanceof Error?e.message:'Could not save book text review.'}
@@ -1025,10 +1042,7 @@ onUnmounted(()=>{
               <details><summary>Advanced link limits</summary>
                 <label>Allowed hosts, separated by commas<input v-model="collectionHosts" required placeholder="example.org" /></label>
                 <label>Allowed path prefixes, one per line<textarea v-model="collectionPaths" required rows="3" placeholder="/book/&#10;/chapters/" /></label>
-                <div class="metadata-grid">
-                  <label>Preview document limit<input v-model.number="collectionMaxDocs" type="number" min="1" max="100" /></label>
-                  <label>Maximum link depth<input v-model.number="collectionMaxDepth" type="number" min="0" max="5" /></label>
-                </div>
+                <p class="input-hint">Preview follows in-scope links at any depth. It stops if its time or data allowance is reached.</p>
               </details>
               <button :disabled="collectionBusy || !collectionSeed.trim()">{{ collectionBusy ? "Discovering…" : "Preview pages (optional)" }}</button>
               <p v-if="collectionError" class="error" role="alert">
@@ -1094,7 +1108,7 @@ onUnmounted(()=>{
               </div>
               <details><summary>Advanced book details</summary>
                 <label>Edition<input v-model="collectionEdition" /></label>
-                <label>Maximum pages to collect<input v-model.number="collectionCaptureDocs" type="number" min="1" max="100" /></label>
+                <p class="input-hint">Capture follows in-scope links at any depth, within its time and data allowances.</p>
                 <label>Scope decision reason<input v-model="collectionRationale" placeholder="Why this work and scope were selected" /></label>
               </details>
               <label class="preview-option"><input v-model="collectionHTTPConsent" type="checkbox" /> Allow unencrypted HTTP for this capture</label>
@@ -1111,16 +1125,24 @@ onUnmounted(()=>{
               <p>{{ capturedCollection.items.filter(item => item.state === 'fetched').length }} pages saved · {{ capturedCollection.items.filter(item => item.source_id).length }} prepared for review · {{ capturedCollection.items.filter(item => item.index_status === 'ready').length }} indexed</p>
               <p>{{ capturedCollection.capture_complete ? 'Selected fetch coverage complete; content review remains.' : 'Coverage incomplete or capture/review still in progress.' }}</p>
               <p v-for="reason in collectionLimitReasons" :key="reason" class="error">{{ reason }}</p>
+              <p v-if="capturedCollection.scope.max_documents>0 || capturedCollection.scope.max_depth>0" class="input-hint">This capture still uses its original {{capturedCollection.scope.max_documents>0?`${capturedCollection.scope.max_documents}-page limit`:''}}{{capturedCollection.scope.max_documents>0&&capturedCollection.scope.max_depth>0?' and ':''}}{{capturedCollection.scope.max_depth>0?`${capturedCollection.scope.max_depth}-level link limit`:''}}.</p>
+              <button v-if="capturedCollection.state!=='queued' && capturedCollection.state!=='capturing' && (capturedCollection.scope.max_documents>0 || capturedCollection.scope.max_depth>0)" :disabled="collectionBusy" @click="refreshCollectionWithoutPageLimits">Recapture all in-scope linked pages</button>
               <p v-if="['review','active'].includes(capturedCollection.state)"><a :href="'/api/v1/collections/'+capturedCollection.collection_id+'/text'" target="_blank" rel="noopener noreferrer">Read all extracted book text with page URLs</a> <span class="input-hint">Review copy; searchable passages still require approval.</span></p>
               <div v-if="capturedCollection.state==='review'" class="step">
                 <h3>Review book text in one editor</h3>
-                <p class="input-hint">Prepare all content pages first. Then remove unwanted text across the book here. Keep PAGE and BLOCK markers intact. Empty a block to exclude it; trim its beginning or end to retain an exact excerpt. Saving records the decisions for each original page. Rights approval and publication remain separate.</p>
+                <p class="input-hint">Prepare all content pages first. Each page shows its source URL and editable passages. Empty a passage to exclude it; trim its beginning or end to retain an exact excerpt. Saving records the decisions for each original page. Rights approval and publication remain separate.</p>
+                <p v-if="capturedCollection.items.some(item=>item.state==='fetched'&&item.role==='content_candidate'&&(!item.source_id||!['review','published'].includes(item.source_status)))" class="input-hint">Some content pages are still being prepared. The editor will open when every content page is ready; use Refresh status to check progress.</p>
                 <button :disabled="collectionReviewBusy || collectionBusy" @click="openCollectionReview">{{collectionReviewBusy?'Loading…':'Open book text editor'}}</button>
+                <p v-if="collectionReviewNotice" role="alert">{{collectionReviewNotice}}</p>
                 <div v-if="collectionReview" class="book-review">
                   <p>{{collectionReview.pages}} pages · {{collectionReview.draft_pages}} draft pages · {{collectionReview.blocks}} text blocks. Published pages are read only. Original pages stay saved for citations.</p>
-                  <textarea v-model="collectionReviewDraft" class="book-review-editor" aria-label="Edit combined book text" spellcheck="false" />
-                  <div class="actions"><button class="primary-button" :disabled="collectionReviewBusy || collectionReviewDraft===collectionReview.text" @click="saveCollectionReview">{{collectionReviewBusy?'Saving…':'Save book text review'}}</button></div>
-                  <details v-if="collectionReviewDraft===collectionReview.text && collectionReview.pending_blocks===0 && collectionReview.draft_pages>0">
+                  <section v-for="(page,pageIndex) in collectionReview.review_pages" :key="page.url" class="step">
+                    <h4>Page {{pageIndex+1}} <small v-if="page.published">· Published, read only</small></h4>
+                    <p><a :href="page.url" target="_blank" rel="noopener noreferrer">{{page.url}}</a></p>
+                    <label v-for="(block,blockIndex) in page.blocks" :key="block.id">Passage {{blockIndex+1}}<textarea v-model="collectionReviewEdits[collectionReview.review_pages.slice(0,pageIndex).reduce((count,item)=>count+item.blocks.length,0)+blockIndex].text" class="book-review-editor" :aria-label="`Edit page ${pageIndex+1} passage ${blockIndex+1}`" :readonly="page.published" spellcheck="false" /></label>
+                  </section>
+                  <div class="actions"><button class="primary-button" :disabled="collectionReviewBusy || !collectionReviewChanged" @click="saveCollectionReview">{{collectionReviewBusy?'Saving…':'Save book text review'}}</button></div>
+                  <details v-if="!collectionReviewChanged && collectionReview.pending_blocks===0 && collectionReview.draft_pages>0">
                     <summary>Approve rights and queue reviewed pages for RAG</summary>
                     <p>Confirm one rights basis for this book. The app records a separate decision for each retained page, publishes its approved blocks, and queues indexing. Empty pages stay out of answers. Check category suggestions and any extraction warnings before continuing. Bulk publication requires complete capture within the selected scope.</p>
                     <label>Rights statement<textarea v-model="collectionRightsStatement" rows="2" placeholder="Permission or license covering these saved pages" /></label>
@@ -1129,7 +1151,6 @@ onUnmounted(()=>{
                     <button class="primary-button" :disabled="collectionPublishBusy || !capturedCollection.capture_complete || !collectionRightsStatement.trim() || !collectionRightsNote.trim()" @click="publishReviewedCollection">{{collectionPublishBusy?'Publishing pages…':'Approve rights and publish retained pages'}}</button>
                   </details>
                 </div>
-                <p v-if="collectionReviewNotice" role="status">{{collectionReviewNotice}}</p>
               </div>
               <button :disabled="collectionBusy" @click="loadCapturedCollection">Refresh status</button>
               <button v-if="['failed','cancelled','review'].includes(capturedCollection.state) && !capturedCollection.capture_complete" :disabled="collectionBusy" @click="collectionAction('resume')">Retry failed pages</button>

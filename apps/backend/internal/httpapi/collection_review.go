@@ -183,18 +183,22 @@ func (a *API) collectionReviewText(w http.ResponseWriter, r *http.Request) {
 	blocks := 0
 	pending := 0
 	draftPages := 0
+	pages := make([]map[string]any, 0, len(sources))
 	for _, source := range sources {
+		pageBlocks := make([]map[string]any, 0, len(source.blocks))
 		if source.status == "review" {
 			draftPages++
 		}
 		blocks += len(source.blocks)
 		for _, block := range source.blocks {
+			pageBlocks = append(pageBlocks, map[string]any{"id": block.id, "text": block.reviewed})
 			if source.status == "review" && block.status == "pending" {
 				pending++
 			}
 		}
+		pages = append(pages, map[string]any{"url": source.url, "published": source.status == "published", "blocks": pageBlocks})
 	}
-	write(w, 200, map[string]any{"snapshot_id": snapshotID, "text": result, "pages": len(sources), "draft_pages": draftPages, "blocks": blocks, "pending_blocks": pending})
+	write(w, 200, map[string]any{"snapshot_id": snapshotID, "text": result, "pages": len(sources), "review_pages": pages, "draft_pages": draftPages, "blocks": blocks, "pending_blocks": pending})
 }
 
 func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
@@ -208,6 +212,10 @@ func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		SnapshotID uuid.UUID `json:"snapshot_id"`
 		Text       string    `json:"text"`
+		Edits      *[]struct {
+			ID   uuid.UUID `json:"id"`
+			Text string    `json:"text"`
+		} `json:"edits"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2*maxCollectionReviewBytes+4096)).Decode(&body); err != nil {
 		fail(w, 400, "invalid book review text")
@@ -232,7 +240,26 @@ func (a *API) saveCollectionReviewText(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "collection snapshot changed; reload book review")
 		return
 	}
-	texts, err := parseCollectionReview(body.Text, sources)
+	var texts []string
+	if body.Edits != nil {
+		position := 0
+		for _, source := range sources {
+			for _, block := range source.blocks {
+				if position >= len(*body.Edits) || (*body.Edits)[position].ID != block.id {
+					fail(w, 400, "book page or block order changed; reload the editor")
+					return
+				}
+				texts = append(texts, strings.TrimSpace((*body.Edits)[position].Text))
+				position++
+			}
+		}
+		if position != len(*body.Edits) {
+			fail(w, 400, "book page or block count changed; reload the editor")
+			return
+		}
+	} else {
+		texts, err = parseCollectionReview(body.Text, sources)
+	}
 	if err != nil {
 		fail(w, 400, err.Error())
 		return

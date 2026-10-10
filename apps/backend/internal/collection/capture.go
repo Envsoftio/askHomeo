@@ -200,7 +200,7 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 			return err
 		}
 		for i, link := range links {
-			if i >= 500 {
+			if i >= 10000 {
 				_, err = tx.Exec(ctx, `UPDATE collection_snapshots SET incomplete_reasons=array_append(incomplete_reasons,'link limit reached') WHERE id=$1`, snapshotID)
 				if err != nil {
 					return err
@@ -219,9 +219,9 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 				}
 				if exists {
 					linkState = "duplicate_or_cycle"
-				} else if depth >= scope.MaxDepth {
+				} else if scope.MaxDepth > 0 && depth >= scope.MaxDepth {
 					linkState = "excluded_depth"
-				} else if count >= scope.MaxDocuments {
+				} else if scope.MaxDocuments > 0 && count >= scope.MaxDocuments {
 					linkState = "excluded_document_limit"
 				} else {
 					_, err = tx.Exec(ctx, `INSERT INTO collection_items(id,snapshot_id,requested_url,depth,discovery_ordinal) VALUES($1,$2,$3,$4,$5) ON CONFLICT(snapshot_id,requested_url) DO NOTHING`, uuid.New(), snapshotID, link.To, depth+1, count)
