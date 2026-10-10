@@ -85,6 +85,9 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/sources/{id}/disable", a.disableSource)
 	mux.HandleFunc("POST /api/v1/sources/{id}/enable", a.enableSource)
 	mux.HandleFunc("DELETE /api/v1/sources/{id}", a.removeSource)
+	mux.HandleFunc("DELETE /api/v1/sources/{id}/permanent", a.permanentlyDeleteSource)
+	mux.HandleFunc("GET /api/v1/source-file-cleanup", a.deletedFileStatus)
+	mux.HandleFunc("POST /api/v1/source-file-cleanup/retry", a.retryDeletedFiles)
 	mux.HandleFunc("GET /api/v1/repositories/archive/search", a.searchArchive)
 	mux.HandleFunc("GET /api/v1/repositories/archive/items/{id}", a.archiveItem)
 	mux.HandleFunc("POST /api/v1/doi-references", a.addDOIReference)
@@ -347,7 +350,7 @@ func (a *API) pageImage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(data)
 }
 func (a *API) sources(w http.ResponseWriter, r *http.Request) {
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' WHERE s.removed_at IS NULL ORDER BY s.created_at DESC LIMIT 50`)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT s.id,s.title,s.author,s.status,s.rights_status,coalesce(j.completed,0),coalesce(j.total,0),coalesce(j.error,''),s.supersedes_source_id,s.superseded_at IS NOT NULL,s.document_format,s.literature_categories,s.evidence_category,s.removed_at IS NOT NULL,source_deletion_blocker(s.id) FROM sources s LEFT JOIN jobs j ON j.source_id=s.id AND j.kind='ingest' WHERE (s.removed_at IS NULL OR $1) ORDER BY s.created_at DESC LIMIT 100`, requestRole(r.Context()) == "admin")
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -357,15 +360,16 @@ func (a *API) sources(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id uuid.UUID
 		var supersedes *uuid.UUID
-		var superseded bool
+		var superseded, removed bool
+		var deletionBlocker string
 		var title, author, status, rights, problem, format, evidenceCategory string
 		var categories []string
 		var completed, total int
-		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded, &format, &categories, &evidenceCategory); err != nil {
+		if err = rows.Scan(&id, &title, &author, &status, &rights, &completed, &total, &problem, &supersedes, &superseded, &format, &categories, &evidenceCategory, &removed, &deletionBlocker); err != nil {
 			fail(w, 500, err.Error())
 			return
 		}
-		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "document_format": format, "literature_categories": categories, "evidence_category": evidenceCategory, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded})
+		out = append(out, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "document_format": format, "literature_categories": categories, "evidence_category": evidenceCategory, "pages_read": completed, "pages_total": total, "error": problem, "supersedes_source_id": supersedes, "superseded": superseded, "removed": removed, "deletion_blocker": deletionBlocker})
 	}
 	write(w, 200, out)
 }

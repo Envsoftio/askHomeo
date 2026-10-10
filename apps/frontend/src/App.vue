@@ -216,9 +216,11 @@ function pageState(p:Page){
  if(p.text_qa_status==='passed')return 'Text checked automatically'
  return p.review_status==='reviewed'?'Checked':'Needs check'
 }
+const fileCleanup=ref({pending:0,failed:0}),deletionNotice=ref('')
 async function refresh(){
  try{
   sources.value=await api<Source[]>('/sources')
+  if(session.value?.role==='admin')fileCleanup.value=await api<{pending:number,failed:number}>('/source-file-cleanup')
   doiReferences.value=await api<DOIReference[]>('/doi-references')
   const published=sources.value.filter(s=>s.status==='published')
   const statuses=await Promise.all(published.map(s=>api<IndexStatus>(`/sources/${s.id}/index-status`)))
@@ -427,6 +429,13 @@ function retryIndex(){if(!active.value)return;run(async()=>{await api(`/sources/
 function reprocessSource(){if(!active.value)return;run(async()=>{const result=await api<{source_id:string}>(`/sources/${active.value!.id}/reprocess`,{method:'POST'});await refresh();const candidate=sources.value.find(s=>s.id===result.source_id);if(candidate)await chooseSource(candidate)})}
 function reimportDocument(){if(!active.value)return;run(async()=>{const result=await api<{source_id:string}>(`/sources/${active.value!.id}/reimport-document`,{method:'POST',body:JSON.stringify({allow_https_to_http_redirect:false})});await refresh();const candidate=sources.value.find(s=>s.id===result.source_id);if(candidate)await chooseSource(candidate)})}
 function setSourceAccess(enable:boolean){if(!active.value||sourceAccessReason.value.trim().length<8)return;run(async()=>{await api(`/sources/${active.value!.id}/${enable?'enable':'disable'}`,{method:'POST',body:JSON.stringify({reason:sourceAccessReason.value.trim()})});sourceAccessReason.value=''})}
+function purgeSource(source:Source,confirmation:string){run(async()=>{
+ await api(`/sources/${source.id}/permanent`,{method:'DELETE',body:JSON.stringify({confirm_title:confirmation})})
+ deletionNotice.value=`“${source.title}” and its extracted data were deleted.`
+ selectedSourceIds.value=selectedSourceIds.value.filter(id=>id!==source.id)
+ if(active.value?.id===source.id){active.value=null;detail.value=null;tab.value='sources'}
+})}
+function retryFileCleanup(){run(async()=>{await api('/source-file-cleanup/retry',{method:'POST'})})}
 function removeSource(source:Source,reason:string){run(async()=>{await api(`/sources/${source.id}`,{method:'DELETE',body:JSON.stringify({reason})});selectedSourceIds.value=selectedSourceIds.value.filter(id=>id!==source.id);if(active.value?.id===source.id){active.value=null;detail.value=null;tab.value='sources'}})}
 function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='selected'&&asksAboutSelectedSource.value&&selectedSourceIds.value.length!==1)selectedSourceIds.value=[]}
 function showAnswer(result:SavedAnswer,openAsk=true){
@@ -1193,6 +1202,11 @@ onUnmounted(()=>{
             </form>
           </div>
         </section>
+        <p v-if="deletionNotice" role="status">{{deletionNotice}} <span v-if="!fileCleanup.pending">File cleanup finished; files shared with other sources or collections are retained.</span></p>
+        <div v-if="session.role==='admin' && fileCleanup.pending" class="step" role="status">
+          <p>Original-file cleanup pending for {{fileCleanup.pending}} deleted sources. {{fileCleanup.failed ? 'Storage cleanup needs another attempt. Check storage access if this continues.' : 'Cleanup runs in the background.'}}</p>
+          <button v-if="fileCleanup.failed" :disabled="busy" @click="retryFileCleanup">Retry file cleanup</button>
+        </div>
         <SourceLibrary
           :sources="librarySources"
           :can-add="session.role === 'admin'"
@@ -1201,6 +1215,7 @@ onUnmounted(()=>{
           @open="chooseSource"
           @add="openIntake"
           @remove="removeSource"
+          @purge="purgeSource"
         />
         <details
           v-if="doiReferences.length"

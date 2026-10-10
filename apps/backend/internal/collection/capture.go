@@ -150,17 +150,17 @@ func (w *CaptureWorker) captureOne(ctx context.Context, snapshotID, claimToken u
 	if inspectErr != nil {
 		return w.itemFailed(ctx, snapshotID, claimToken, itemID, attempts, scope, inspectErr)
 	}
+	tx, err := w.Store.BeginAssetWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
 	sha := sha256.Sum256(data)
 	shaText := hex.EncodeToString(sha[:])
 	locator, err := saveAsset(w.Store.Root, data, inspected.Format, shaText)
 	if err != nil {
 		return err
 	}
-	tx, err := w.Store.DB.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
 	var stillRunning bool
 	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM collection_snapshots WHERE id=$1 AND state='capturing' FOR UPDATE)`, snapshotID).Scan(&stillRunning)
 	if err != nil {

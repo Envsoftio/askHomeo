@@ -185,17 +185,17 @@ func (s *Store) ImportStarter(ctx context.Context, sourceKey string) (uuid.UUID,
 	if n != asset.Bytes {
 		return uuid.Nil, errors.New("PDF size differs from manifest")
 	}
+	tx, err := s.BeginAssetWrite(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
 	storedPath, err := s.StorePDF(ctx, path, asset.SHA256)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	id := uuid.New()
 	job := uuid.New()
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	defer tx.Rollback(ctx)
 	err = tx.QueryRow(ctx, `INSERT INTO sources(id,source_key,title,author,publication_year,source_url,pdf_path,pdf_sha256,pdf_bytes,page_count,status)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued') ON CONFLICT(source_key) DO UPDATE SET source_key=EXCLUDED.source_key WHERE sources.pdf_sha256=EXCLUDED.pdf_sha256 RETURNING id`, id, seed.SourceKey, seed.CanonicalTitle, seed.Author, seed.PublicationYear, seed.SourceURL, storedPath, asset.SHA256, n, seed.PDFPageCount).Scan(&id)
 	if err != nil {
@@ -310,17 +310,17 @@ func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title,
 	if strings.TrimSpace(sourceURL) == "" {
 		sourceURL = strings.TrimSpace(pdfOriginURL)
 	}
+	tx, err := s.BeginAssetWrite(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
 	sha := hex.EncodeToString(h.Sum(nil))
 	stored, err := s.StorePDF(ctx, tmp.Name(), sha)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	id := uuid.New()
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `INSERT INTO sources(id,source_key,title,author,source_url,pdf_path,pdf_sha256,pdf_bytes,page_count,status,edition,publication_info,repository,rights_statement,pdf_origin_url)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11,$12,$13,$14)`, id, "upload-"+id.String(), strings.TrimSpace(title), strings.TrimSpace(author), strings.TrimSpace(sourceURL), stored, sha, n, count+1, strings.TrimSpace(edition), strings.TrimSpace(publication), strings.TrimSpace(repository), strings.TrimSpace(rightsStatement), strings.TrimSpace(pdfOriginURL))
 	if err != nil {

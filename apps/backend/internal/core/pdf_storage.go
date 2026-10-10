@@ -235,3 +235,42 @@ func (s *Store) MigratePDFs(ctx context.Context) error {
 	}
 	return nil
 }
+
+// DeleteAllVersions removes bytes, not merely an S3 delete marker. Call only
+// after verifying that no source or collection still references this checksum.
+func (b *b2Objects) DeleteAllVersions(ctx context.Context, sha string) error {
+	if !pdfHash.MatchString(sha) {
+		return errors.New("invalid PDF checksum")
+	}
+	key := objectKey(sha)
+	pager := s3.NewListObjectVersionsPaginator(b.client, &s3.ListObjectVersionsInput{Bucket: aws.String(b.bucket), Prefix: aws.String(key)})
+	var versions []string
+	for pager.HasMorePages() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return err
+		}
+		for _, v := range page.Versions {
+			if aws.ToString(v.Key) == key {
+				if aws.ToString(v.VersionId) == "" {
+					return errors.New("missing object version")
+				}
+				versions = append(versions, aws.ToString(v.VersionId))
+			}
+		}
+		for _, v := range page.DeleteMarkers {
+			if aws.ToString(v.Key) == key {
+				if aws.ToString(v.VersionId) == "" {
+					return errors.New("missing delete-marker version")
+				}
+				versions = append(versions, aws.ToString(v.VersionId))
+			}
+		}
+	}
+	for _, version := range versions {
+		if _, err := b.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(b.bucket), Key: aws.String(key), VersionId: aws.String(version)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

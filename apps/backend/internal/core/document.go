@@ -102,6 +102,11 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 	if author == "" {
 		author = "Unknown author (verify details)"
 	}
+	tx, err := s.BeginAssetWrite(ctx)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback(ctx)
 	hash := sha256.Sum256(raw)
 	sha := hex.EncodeToString(hash[:])
 	relative := filepath.Join("data/runtime/assets", sha+"."+format)
@@ -147,22 +152,17 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 		}
 		id = *info.SourceID
 		var priorSHA string
-		lookupErr := s.DB.QueryRow(ctx, `SELECT document_sha256 FROM sources WHERE id=$1`, id).Scan(&priorSHA)
+		lookupErr := tx.QueryRow(ctx, `SELECT document_sha256 FROM sources WHERE id=$1`, id).Scan(&priorSHA)
 		if lookupErr == nil {
 			if priorSHA != sha {
 				return uuid.Nil, errors.New("fixed source identity has different original bytes")
 			}
-			return id, nil
+			return id, tx.Commit(ctx)
 		}
 		if !errors.Is(lookupErr, pgx.ErrNoRows) {
 			return uuid.Nil, lookupErr
 		}
 	}
-	tx, err := s.DB.Begin(ctx)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	defer tx.Rollback(ctx)
 	_, err = tx.Exec(ctx, `INSERT INTO sources(id,source_key,title,author,source_url,status,edition,publication_info,repository,rights_statement,document_format,document_object_locator,document_sha256,document_bytes,document_content_type,document_charset_override,supersedes_source_id)
  VALUES($1,$2,$3,$4,$5,'queued',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, id, "document-"+id.String(), title, author, strings.TrimSpace(info.SourceURL), strings.TrimSpace(info.Edition), strings.TrimSpace(info.PublicationInfo), strings.TrimSpace(info.Repository), strings.TrimSpace(info.RightsStatement), format, relative, sha, len(raw), info.ContentType, info.CharsetOverride, info.SupersedesSourceID)
 	if err != nil {

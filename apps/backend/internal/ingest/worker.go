@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -46,6 +47,24 @@ func New(s *core.Store, model ...*localllm.Client) *Worker {
 }
 
 func (w *Worker) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// File cleanup must continue while a large book is being OCR-checked.
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := w.Store.CleanupDeletedFile(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("source file cleanup: %v", err)
+				}
+			}
+		}
+	}()
+
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
