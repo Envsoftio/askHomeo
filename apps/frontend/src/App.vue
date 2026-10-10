@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue'
 import {api,ApiError,type Citation,type Page,type Source} from './api'
+import MateriaMedicaBrowser from './components/MateriaMedicaBrowser.vue'
+import RepertoryReview from './components/RepertoryReview.vue'
 import RepertoryBrowser from './components/RepertoryBrowser.vue'
 import MateriaMedicaReview from './components/MateriaMedicaReview.vue'
 import SourceLibrary, {type LibraryGroup} from './components/SourceLibrary.vue'
@@ -11,7 +13,10 @@ type DOIReference={id:string,doi:string,title:string,authors:string,publication_
 type ArchiveWork={identifier:string,title:string,creator:string,year:string,record_url:string}
 type ArchivePDF={name:string,url:string,bytes:number,source:string}
 type ArchiveItem=ArchiveWork&{publication_info:string,rights:string,license_url:string,pdfs:ArchivePDF[]}
-const tab=ref<'ask'|'sources'|'review'|'activity'|'repertory'>('sources')
+const tab=ref<'ask'|'sources'|'review'|'activity'|'repertory'|'materia-medica'>('ask')
+const referenceRemedy=ref('')
+function openMateriaMedica(remedyId=''){referenceRemedy.value=remedyId;tab.value='materia-medica'}
+function researchFromReference(sourceId:string,remedyName:string){sourceSelectionMode.value='selected';selectedSourceIds.value=[sourceId];selectedLiteratureCategories.value=['materia_medica'];question.value=`What does this source report about ${remedyName}?`;answer.value='';answerStatus.value='';citation.value=null;citations.value=[];sections.value=[];evidence.value=[];searches.value=[];claimChecks.value=[];omittedClaims.value=0;answerCategoryScope.value=[];currentJobID.value='';openAskTab()}
 const intakeOpen=ref(false),intakeMethod=ref<'upload'|'document'|'link'|'collection'|'archive'|'doi'>('upload')
 const sourcesLoading=ref(true),uploadDragging=ref(false),uploadInput=ref<HTMLInputElement|null>(null)
 const intakeSuccess=ref(''),lastImportedSource=ref('')
@@ -153,6 +158,9 @@ async function syncSession(){
  catch(e){if(version===authVersion&&e instanceof ApiError&&e.status===401){session.value=null;actionError.value='';connectionError.value='';window.clearTimeout(timer);window.clearTimeout(activityTimer)}}
 }
 const readySources=computed(()=>sources.value.filter(s=>sourceGroup(s)==='ready'))
+function referencePreparation(category:string){const matching=sources.value.filter(s=>s.literature_categories.includes(category)&&!s.removed&&!s.superseded);return {ready:matching.filter(s=>sourceGroup(s)==='ready').length,review:matching.filter(s=>s.status==='review').length,processing:matching.filter(s=>sourceGroup(s)==='processing').length,attention:matching.filter(s=>sourceGroup(s)==='attention'&&s.status!=='review').length}}
+const repertoryPreparation=computed(()=>referencePreparation('repertory'))
+const materiaMedicaPreparation=computed(()=>referencePreparation('materia_medica'))
 const librarySources=computed(()=>sources.value.map(s=>({...s,group:sourceGroup(s),state:stateText(s)})))
 const activeCandidate=computed(()=>active.value?sources.value.find(s=>s.supersedes_source_id===active.value?.id&&s.status!=='failed'&&s.status!=='disabled'):null)
 const readyCount=computed(()=>readySources.value.length)
@@ -634,8 +642,6 @@ onUnmounted(()=>{
           <button :class="{ selected: tab === 'ask' }" @click="openAskTab">Ask</button
           ><button :class="{ selected: tab === 'sources' }" @click="tab = 'sources'">
             Sources</button
-          ><button :class="{ selected: tab === 'repertory' }" @click="tab = 'repertory'">
-            Repertory</button
           ><button :class="{ selected: tab === 'review' }" @click="tab = 'review'">
             Review</button
           ><button :class="{ selected: tab === 'activity' }" @click="openActivityTab">
@@ -645,6 +651,7 @@ onUnmounted(()=>{
               attention<span v-if="unreadActivity"> · {{ unreadActivity }} new</span
               >)</span
             ></button
+          ><span role="group" aria-label="Reference libraries" class="reference-navigation"><small>Reference</small><button :class="{ selected: tab === 'repertory' }" @click="tab = 'repertory'">Repertory</button><button :class="{ selected: tab === 'materia-medica' }" @click="openMateriaMedica()">Materia Medica</button></span
           ><span>{{ session.name }} ({{ session.role }})</span
           ><button @click="signOut">Sign out</button>
         </nav>
@@ -665,7 +672,7 @@ onUnmounted(()=>{
           <div>
             <p class="eyebrow">KNOWLEDGE BASE</p>
             <h1>Sources</h1>
-            <p>Build a library you can trace every answer back to.</p>
+            <p>Build a library you can trace every answer back to. Add books from multiple authors, providers and editions here; reviewed repertory and materia medica entries also appear in the reference libraries.</p>
           </div>
           <button
             v-if="session.role === 'admin'"
@@ -770,7 +777,7 @@ onUnmounted(()=>{
                 <option value="">Let extraction suggest a category</option>
                 <option v-for="value in literatureOptions" :key="value" :value="value">{{ value.replaceAll("_", " ") }}</option>
               </select></label>
-              <p class="input-hint">For materia medica, check remedy headings, symptom sections and page order during review. Scanned PDFs may need OCR corrections.</p>
+              <p class="input-hint">For materia medica, review remedy identity and continuation. For repertories, review rubric hierarchy and memberships. Both use the same text, rights and publication workflow. Scanned PDFs may need OCR corrections.</p>
               <p v-if="uploadNotice" class="error" role="alert">{{ uploadNotice }}</p>
               <details class="optional-details">
                 <summary>Add source details <span>Optional</span></summary>
@@ -790,7 +797,7 @@ onUnmounted(()=>{
                       v-model="uploadPublication"
                       maxlength="500" /></label
                   ><label
-                    >Repository or collection<input
+                    >Provider / repository or collection<input
                       v-model="uploadRepository"
                       maxlength="300" /></label
                   ><label
@@ -849,7 +856,7 @@ onUnmounted(()=>{
                 ><label>Author<input v-model="uploadAuthor" /></label
                 ><label>Edition<input v-model="uploadEdition" /></label
                 ><label>Publication details<input v-model="uploadPublication" /></label
-                ><label>Repository<input v-model="uploadRepository" /></label
+                ><label>Provider / repository<input v-model="uploadRepository" /></label
                 ><label>Source URL<input v-model="uploadURL" type="url" /></label
                 ><label
                   >Rights statement<textarea v-model="uploadRights" rows="2" />
@@ -958,7 +965,7 @@ onUnmounted(()=>{
                       v-model="linkPublication"
                       maxlength="500" /></label
                   ><label
-                    >Repository or collection<input
+                    >Provider / repository or collection<input
                       v-model="linkRepository"
                       maxlength="300" /></label
                   ><label
@@ -1363,7 +1370,8 @@ onUnmounted(()=>{
         </details>
       </section>
 
-      <RepertoryBrowser v-else-if="tab === 'repertory'" />
+      <RepertoryBrowser v-else-if="tab === 'repertory'" :preparation="repertoryPreparation" @sources="tab='sources'" @materia-medica="openMateriaMedica" />
+      <MateriaMedicaBrowser v-else-if="tab === 'materia-medica'" :key="referenceRemedy" :preparation="materiaMedicaPreparation" :initial-remedy="referenceRemedy" @sources="tab='sources'" @research="researchFromReference" />
       <section v-else-if="tab === 'review'" class="source-review-workspace">
         <button class="back-link" @click="tab = 'sources'">
           ← Back to source library
@@ -1440,7 +1448,8 @@ onUnmounted(()=>{
               </div>
             </div>
           </div>
-          <MateriaMedicaReview v-if="session.role==='admin' && detail?.literature_categories.includes('materia_medica') && ['review','published'].includes(active.status)" :source-id="active.id" :status="active.status" />
+          <RepertoryReview v-if="session.role==='admin' && detail?.literature_categories.includes('repertory') && ['review','published'].includes(active.status)" :key="'rep-'+active.id" :source-id="active.id" :status="active.status" />
+          <MateriaMedicaReview :key="'mm-'+active.id" v-if="session.role==='admin' && detail?.literature_categories.includes('materia_medica') && ['review','published'].includes(active.status)" :source-id="active.id" :status="active.status" />
           <template v-if="detail?.document_format && detail.document_format !== 'pdf'">
             <div class="step">
               <h3>
@@ -1483,7 +1492,7 @@ onUnmounted(()=>{
                 ><label>Edition<input v-model="metadata.edition" /></label
                 ><label
                   >Publication details<input v-model="metadata.publication_info" /></label
-                ><label>Repository<input v-model="metadata.repository" /></label
+                ><label>Provider / repository<input v-model="metadata.repository" /></label
                 ><label
                   >Source URL<input v-model="metadata.source_url" type="url" /></label
                 ><label
@@ -1840,7 +1849,7 @@ onUnmounted(()=>{
                     >Publication details
                     <input v-model="metadata.publication_info" /></label
                   ><label
-                    >Repository or collection
+                    >Provider / repository or collection
                     <input v-model="metadata.repository" /></label
                   ><label
                     >Source URL <input v-model="metadata.source_url" type="url" /></label
@@ -2335,8 +2344,8 @@ onUnmounted(()=>{
       <section v-else>
         <h1>Ask your sources</h1>
         <p>
-          Searches {{ readyCount }} prepared
-          {{ readyCount === 1 ? "source" : "sources" }}. Ask about a source, what an
+          {{ readyCount }} prepared {{ readyCount === 1 ? "source is" : "sources are" }} available.
+          Searches {{ sourceSelectionMode === "all" ? "all prepared sources" : `${selectedSourceIds.length} selected source(s)` }} within the category filters below. Ask about a source, what an
           author reports, or how authors compare. Open each citation to check the passage
           against its original scan. Historical claims are not modern clinical evidence.
         </p>

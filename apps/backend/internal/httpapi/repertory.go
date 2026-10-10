@@ -13,20 +13,23 @@ import (
 
 // All browser routes share the publication, revision, collection and current
 // embedding-configuration gates. Search never reads the draft review APIs.
-const repertoryEligible = `WITH eligible AS (
- SELECT e.*,s.title,s.author,s.edition,s.document_format
+const referenceEligible = `WITH eligible AS (
+ SELECT e.*,s.title,s.author,s.edition,s.repository,s.document_format
  FROM eligible_structured_entries e JOIN sources s ON s.id=e.source_id
  JOIN active_indexes ai ON ai.source_id=s.id JOIN index_runs ir ON ir.id=ai.index_run_id
  JOIN embedding_configs ec ON ec.id=ir.embedding_config_id
- WHERE e.kind='repertory_rubric' AND s.removed_at IS NULL
+ WHERE s.removed_at IS NULL
  AND ec.model_id=$1 AND ec.model_revision=$2 AND ec.dimensions=$3
+`
+
+const repertoryEligible = referenceEligible + ` AND e.kind='repertory_rubric'
 ), associations AS (
  SELECT rr.* FROM eligible_rubric_remedies rr JOIN eligible e ON e.id=rr.rubric_id
 ) `
 
-func (a *API) repertoryConfig(w http.ResponseWriter) ([]any, bool) {
+func (a *API) referenceBrowserConfig(w http.ResponseWriter) ([]any, bool) {
 	if a.Model == nil {
-		fail(w, 503, "repertory search requires an active embedding configuration")
+		fail(w, 503, "reference browsing requires an active embedding configuration")
 		return nil, false
 	}
 	c := a.Model.Config
@@ -34,14 +37,14 @@ func (a *API) repertoryConfig(w http.ResponseWriter) ([]any, bool) {
 }
 
 func (a *API) repertoryCatalog(w http.ResponseWriter, r *http.Request) {
-	args, ok := a.repertoryConfig(w)
+	args, ok := a.referenceBrowserConfig(w)
 	if !ok {
 		return
 	}
 	var data json.RawMessage
 	err := a.Store.DB.QueryRow(r.Context(), repertoryEligible+`SELECT jsonb_build_object(
  'sources',coalesce((SELECT jsonb_agg(x ORDER BY title,edition,id) FROM
- (SELECT DISTINCT source_id AS id,title,author,edition FROM eligible) x),'[]'::jsonb),
+ (SELECT DISTINCT source_id AS id,title,author,edition,repository FROM eligible) x),'[]'::jsonb),
  'chapters',coalesce((SELECT jsonb_agg(x ORDER BY chapter,source_id) FROM
  (SELECT DISTINCT source_id,full_path[1] AS chapter FROM eligible) x),'[]'::jsonb),
  'remedies',coalesce((SELECT jsonb_agg(x ORDER BY canonical_name,preparation_key) FROM
@@ -104,14 +107,14 @@ func (a *API) searchRepertory(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "invalid repertory search filters")
 		return
 	}
-	args, ok := a.repertoryConfig(w)
+	args, ok := a.referenceBrowserConfig(w)
 	if !ok {
 		return
 	}
 	args = append(args, q.Text, q.Sources, q.Scope == "selected", q.Chapter, q.Parent, q.Remedy, q.Offset)
 	var data json.RawMessage
 	err := a.Store.DB.QueryRow(r.Context(), repertoryEligible+`, matched AS (
- SELECT e.id,e.source_id,e.processing_revision_id,e.parent_id,e.heading,e.full_path,e.title,e.author,e.edition,
+ SELECT e.id,e.source_id,e.processing_revision_id,e.parent_id,e.heading,e.full_path,e.title,e.author,e.edition,e.repository,
  (WITH RECURSIVE parents AS (
  SELECT a.id,a.parent_id,a.heading,1 AS depth,ARRAY[a.id] AS visited FROM eligible a WHERE a.id=e.parent_id
  UNION ALL SELECT a.id,a.parent_id,a.heading,p.depth+1,p.visited||a.id FROM eligible a JOIN parents p ON a.id=p.parent_id
@@ -145,7 +148,7 @@ func (a *API) repertoryRubric(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	args, ok := a.repertoryConfig(w)
+	args, ok := a.referenceBrowserConfig(w)
 	if !ok {
 		return
 	}

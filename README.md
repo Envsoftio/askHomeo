@@ -2,6 +2,16 @@
 
 Product planning: [Product requirements and development direction](Homeopathy_AI_Product_Requirements_and_Roadmap.md) records the general-question and future case-analysis workflows, current POC boundaries, and guidance for task creation and architecture design. Use it alongside the [POC PRD](Homeopathy_AI_Source_Ingestion_POC_PRD.md) and [master handoff](Homeopathy_AI_Codex_Master_Handoff.md).
 
+## Research and reference libraries
+
+**Ask** is the default research workspace. **Repertory** and **Materia Medica** are supplementary reference libraries. Add multiple books/providers through **Sources**, preserving each title, author, edition and provider/repository. Both accept PDF, HTML and TXT through the shared intake.
+
+Review the extracted text against its original, then use the source’s structure-review panel: verify remedy/preparation identities and continuation spans for materia medica; verify parent/child rubric headings, exact remedy notation and memberships for repertory. Leave unknown grades blank; known numeric grades require cited source-convention evidence. Approvals are manual—uploading a book does not populate verified rubrics automatically. Record rights and publish/index the source before it appears in either reference library.
+
+After adding a source, the worker extracts reviewable text. Approval and publication queue passage preparation and embeddings. Sources and the reference pages show review, preparation, failure and ready states; Ask searches only compatible ready indexes. Reindex a published source if the embedding configuration changes. Verified rubric membership and grades are browsable with evidence, while structured rubric answers in Ask remain an ING-06 acceptance item.
+
+Each library filters provider and selected books. Repertory memberships link to matching verified Materia Medica preparations. Materia Medica can prepare a scoped Ask question without submitting it. Counts describe available reviewed records, not complete book coverage. Migration 051 adds draft repertory-review invalidation; rebuild the API, worker and frontend to activate the new screens and routes.
+
 ## Run
 
 1. Copy `.env.example` to `.env`, set `ADMIN_USERNAME` and `ADMIN_PASSWORD`, and set `DEEPINFRA_API_KEY`. Keep the file private.

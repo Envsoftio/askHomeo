@@ -1,24 +1,30 @@
 <script setup lang="ts">
-import {computed,onMounted,ref} from 'vue'
+import {computed,onMounted,onUnmounted,ref} from 'vue'
 import {api} from '../api'
-type Book={id:string,title:string,author:string,edition:string}
+type Preparation={ready:number,review:number,processing:number,attention:number}
+const props=defineProps<{preparation:Preparation}>()
+const emit=defineEmits<{sources:[],materiaMedica:[remedyId:string]}>()
+type Book={id:string,title:string,author:string,edition:string,repository:string}
 type Remedy={id:string,canonical_name:string,preparation_key:string}
 type Ancestor={id:string,heading:string}
-type Rubric={ancestors:Ancestor[],id:string,source_id:string,parent_id:string|null,heading:string,full_path:string[],title:string,edition:string,verified_remedy_count:number,has_children:boolean}
+type Rubric={ancestors:Ancestor[],id:string,source_id:string,parent_id:string|null,heading:string,full_path:string[],title:string,author:string,edition:string,repository:string,verified_remedy_count:number,has_children:boolean}
 type Location={exact_text:string,start_character:number,end_character:number,original_url:string}
 type Detail={id:string,locations:Location[],remedies:{id:string,remedy_id:string,canonical_name:string,preparation_key:string,source_notation:string,grade:number|null,grade_scheme:string,locations:Location[]}[]}
 const catalog=ref<{sources:Book[],chapters:{source_id:string,chapter:string}[],remedies:Remedy[]}>({sources:[],chapters:[],remedies:[]})
-const scope=ref('all'),sourceIDs=ref<string[]>([]),query=ref(''),chapter=ref(''),remedy=ref('')
+const scope=ref('all'),sourceIDs=ref<string[]>([]),query=ref(''),chapter=ref(''),remedy=ref(''),provider=ref('')
+const providers=computed(()=>[...new Set(catalog.value.sources.map(s=>s.repository).filter(Boolean))].sort())
+const books=computed(()=>catalog.value.sources.filter(s=>!provider.value||s.repository===provider.value))
 const parent=ref(''),trail=ref<Ancestor[]>([]),offset=ref(0),total=ref(0),items=ref<Rubric[]>([])
 const loading=ref(false),error=ref(''),coverage=ref(''),detail=ref<Detail|null>(null),detailLoading=ref('')
 let generation=0,detailGeneration=0
-const chapters=computed(()=>[...new Set(catalog.value.chapters.filter(x=>scope.value==='all'||sourceIDs.value.includes(x.source_id)).map(x=>x.chapter))].sort())
+const chapters=computed(()=>[...new Set(catalog.value.chapters.filter(x=>books.value.some(s=>s.id===x.source_id)&&(scope.value==='all'||sourceIDs.value.includes(x.source_id))).map(x=>x.chapter))].sort())
 const previousSearch=ref<{parent:string,trail:Ancestor[],offset:number,query:string,chapter:string}|null>(null)
 async function search(reset=false){
  const current=++generation;detailGeneration++;detail.value=null;detailLoading.value='';loading.value=true;error.value='';items.value=[];total.value=0
  if(reset){offset.value=0;parent.value='';trail.value=[];previousSearch.value=null}
- const p=new URLSearchParams({q:query.value,scope:scope.value,chapter:chapter.value,parent:parent.value,offset:String(offset.value)})
- for(const id of sourceIDs.value)if(scope.value==='selected')p.append('source_id',id)
+ const p=new URLSearchParams({q:query.value,scope:provider.value?'selected':scope.value,chapter:chapter.value,parent:parent.value,offset:String(offset.value)})
+ const ids=provider.value?books.value.filter(s=>scope.value==='all'||sourceIDs.value.includes(s.id)).map(s=>s.id):sourceIDs.value
+ for(const id of ids)if(scope.value==='selected'||provider.value)p.append('source_id',id)
  if(remedy.value)p.set('remedy_id',remedy.value)
  try{const result=await api<{items:Rubric[],total:number,coverage:string}>('/repertory/rubrics?'+p);if(current===generation){items.value=result.items;total.value=result.total;coverage.value=result.coverage}}
  catch(e){if(current===generation)error.value=e instanceof Error?e.message:'Could not search rubrics.'}
@@ -41,17 +47,22 @@ function up(){trail.value.pop();parent.value=trail.value.at(-1)?.id||'root';offs
 function page(delta:number){offset.value+=delta;search()}
 function reverse(id:string){remedy.value=id;query.value='';search(true)}
 onMounted(async()=>{try{catalog.value=await api('/repertory/catalog');await search()}catch(e){error.value=e instanceof Error?e.message:'Could not load repertories.'}})
+onUnmounted(()=>{generation++;detailGeneration++})
 </script>
 
 <template>
  <section class="repertory-browser">
-  <h1>Repertory</h1>
+  <p class="eyebrow">REFERENCE LIBRARY</p><h1>Repertory</h1>
   <p>Explore reviewed rubric paths and remedy memberships in your published sources.</p>
+  <p role="status">{{props.preparation.ready}} sources ready for passage research · {{props.preparation.review}} awaiting review · {{props.preparation.processing}} processing or indexing · {{props.preparation.attention}} needing attention.</p>
+  <p>After intake, review extracted text and reference identities, record rights, then publish. Publication queues passage embeddings; Ask uses the source when indexing finishes. Reference entries appear once their verified mappings and compatible index are ready.</p>
+  <button @click="emit('sources')">Manage repertories in Sources</button>
   <form class="repertory-filters" @submit.prevent="search(true)">
    <label>Search rubric wording<input v-model="query" maxlength="300" placeholder="For example: fear dark" /></label>
+   <label>Provider / repository<select v-model="provider" @change="chapter='';search(true)"><option value="">All providers</option><option v-for="value in providers" :key="value">{{value}}</option></select></label>
    <label>Source scope<select v-model="scope" @change="chapter='';search(true)"><option value="all">All eligible repertories</option><option value="selected">Selected sources only</option></select></label>
    <fieldset v-if="scope==='selected'"><legend>Sources and editions</legend>
-    <label v-for="book in catalog.sources" :key="book.id"><input v-model="sourceIDs" type="checkbox" :value="book.id" @change="chapter='';search(true)" />{{book.title}} · {{book.author}} · {{book.edition||'Edition unspecified'}}</label>
+    <label v-for="book in books" :key="book.id"><input v-model="sourceIDs" type="checkbox" :value="book.id" @change="chapter='';search(true)" />{{book.title}} · {{book.author}} · {{book.edition||'Edition unspecified'}}<span v-if="book.repository"> · {{book.repository}}</span></label>
     <p v-if="!sourceIDs.length">Select at least one source. An empty selection returns no rubrics.</p>
    </fieldset>
    <label>Chapter<select v-model="chapter" @change="search(true)"><option value="">All chapters</option><option v-for="value in chapters" :key="value">{{value}}</option></select></label>
@@ -64,9 +75,9 @@ onMounted(async()=>{try{catalog.value=await api('/repertory/catalog');await sear
   <nav v-if="parent" aria-label="Rubric tree"><span>{{trail.map(x=>x.heading).join(' → ')||'Rubric tree'}}</span> <button v-if="trail.length" @click="up">Up one level</button></nav>
   <p role="status">{{loading?'Loading reviewed rubrics…':`${total} matching reviewed rubrics`}}</p>
   <p class="coverage">{{coverage}}</p>
-  <p v-if="!loading&&!error&&!items.length">No verified rubrics match this scope. Passage availability does not establish reviewed rubric structure or membership.</p>
+  <p v-if="!loading&&!error&&!items.length">No verified rubrics match this scope. Add books in Sources and review their rubric hierarchy and memberships before publication. Passage availability alone does not establish verified repertory structure.</p>
   <article v-for="row in items" :key="row.id" class="rubric">
-   <small>{{row.title}} · {{row.edition||'Edition unspecified'}}</small>
+   <small>{{row.title}} · {{row.author}} · {{row.edition||'Edition unspecified'}}<span v-if="row.repository"> · {{row.repository}}</span></small>
    <h2>{{row.full_path.join(' → ')}}</h2>
    <p>{{row.verified_remedy_count}} verified {{row.verified_remedy_count===1?'remedy':'remedies'}} · list coverage not established</p>
    <div class="rubric-actions">
@@ -84,6 +95,7 @@ onMounted(async()=>{try{catalog.value=await api('/repertory/catalog');await sear
      <h3>{{association.source_notation}} — {{association.canonical_name}}</h3>
      <p>{{association.preparation_key}} · {{association.grade===null?'Grade unknown':`Grade ${association.grade} · ${association.grade_scheme}`}}</p>
      <button @click="reverse(association.remedy_id)">Find rubrics containing this remedy</button>
+     <button @click="emit('materiaMedica',association.remedy_id)">Read in Materia Medica</button>
      <details><summary>Membership evidence</summary><div v-for="(loc,i) in association.locations" :key="i"><blockquote>{{loc.exact_text}}</blockquote><a :href="loc.original_url" target="_blank" rel="noopener">Open saved original</a> · characters {{loc.start_character}}–{{loc.end_character}}</div></details>
     </section>
    </div>
