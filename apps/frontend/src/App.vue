@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed,nextTick,onMounted,onUnmounted,ref,watch} from 'vue'
 import {api,ApiError,type Citation,type Page,type Source} from './api'
+import RepertoryBrowser from './components/RepertoryBrowser.vue'
 import MateriaMedicaReview from './components/MateriaMedicaReview.vue'
 import SourceLibrary, {type LibraryGroup} from './components/SourceLibrary.vue'
 
@@ -10,7 +11,7 @@ type DOIReference={id:string,doi:string,title:string,authors:string,publication_
 type ArchiveWork={identifier:string,title:string,creator:string,year:string,record_url:string}
 type ArchivePDF={name:string,url:string,bytes:number,source:string}
 type ArchiveItem=ArchiveWork&{publication_info:string,rights:string,license_url:string,pdfs:ArchivePDF[]}
-const tab=ref<'ask'|'sources'|'review'|'activity'>('sources')
+const tab=ref<'ask'|'sources'|'review'|'activity'|'repertory'>('sources')
 const intakeOpen=ref(false),intakeMethod=ref<'upload'|'document'|'link'|'collection'|'archive'|'doi'>('upload')
 const sourcesLoading=ref(true),uploadDragging=ref(false),uploadInput=ref<HTMLInputElement|null>(null)
 const intakeSuccess=ref(''),lastImportedSource=ref('')
@@ -633,6 +634,8 @@ onUnmounted(()=>{
           <button :class="{ selected: tab === 'ask' }" @click="openAskTab">Ask</button
           ><button :class="{ selected: tab === 'sources' }" @click="tab = 'sources'">
             Sources</button
+          ><button :class="{ selected: tab === 'repertory' }" @click="tab = 'repertory'">
+            Repertory</button
           ><button :class="{ selected: tab === 'review' }" @click="tab = 'review'">
             Review</button
           ><button :class="{ selected: tab === 'activity' }" @click="openActivityTab">
@@ -1360,6 +1363,7 @@ onUnmounted(()=>{
         </details>
       </section>
 
+      <RepertoryBrowser v-else-if="tab === 'repertory'" />
       <section v-else-if="tab === 'review'" class="source-review-workspace">
         <button class="back-link" @click="tab = 'sources'">
           ← Back to source library
