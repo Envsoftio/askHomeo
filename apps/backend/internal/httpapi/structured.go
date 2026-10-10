@@ -239,6 +239,8 @@ func (a *API) createRubricRemedy(w http.ResponseWriter, r *http.Request) {
 		SourceRemedySpelling string                    `json:"source_remedy_spelling"`
 		Grade                *int                      `json:"grade"`
 		GradeScheme          string                    `json:"grade_scheme"`
+		SourceStyle          string                    `json:"source_style"`
+		CategoricalGrade     string                    `json:"categorical_grade"`
 		Locations            []structuredLocationInput `json:"locations"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768)).Decode(&b) != nil ||
@@ -246,6 +248,15 @@ func (a *API) createRubricRemedy(w http.ResponseWriter, r *http.Request) {
 		len(b.Locations) == 0 || len(b.Locations) > 20 ||
 		(b.Grade != nil && (*b.Grade <= 0 || strings.TrimSpace(b.GradeScheme) == "")) {
 		fail(w, 400, "notation, spelling, exact support and a scheme for known grades are required")
+		return
+	}
+	if b.SourceStyle == "" {
+		b.SourceStyle = "unknown"
+	}
+	b.CategoricalGrade = strings.TrimSpace(b.CategoricalGrade)
+	b.GradeScheme = strings.TrimSpace(b.GradeScheme)
+	if !validSourceStyle(b.SourceStyle) || len(b.CategoricalGrade) > 300 || len(b.GradeScheme) > 2000 || (b.CategoricalGrade != "" && !conventionSupported(b.GradeScheme, b.Locations)) {
+		fail(w, 400, "invalid source style or missing exact categorical convention evidence")
 		return
 	}
 	for _, loc := range b.Locations {
@@ -270,9 +281,9 @@ func (a *API) createRubricRemedy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.New()
-	_, err = tx.Exec(ctx, `INSERT INTO rubric_remedies(id,rubric_id,source_id,processing_revision_id,remedy_id,source_notation,source_remedy_spelling,grade,grade_scheme)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, id, rubricID, sourceID, revisionID, b.RemedyID,
-		strings.TrimSpace(b.SourceNotation), strings.TrimSpace(b.SourceRemedySpelling), b.Grade, strings.TrimSpace(b.GradeScheme))
+	_, err = tx.Exec(ctx, `INSERT INTO rubric_remedies(id,rubric_id,source_id,processing_revision_id,remedy_id,source_notation,source_remedy_spelling,grade,grade_scheme,source_style,categorical_grade)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, rubricID, sourceID, revisionID, b.RemedyID,
+		strings.TrimSpace(b.SourceNotation), strings.TrimSpace(b.SourceRemedySpelling), b.Grade, strings.TrimSpace(b.GradeScheme), b.SourceStyle, b.CategoricalGrade)
 	if err != nil {
 		fail(w, 400, "invalid rubric association")
 		return
@@ -353,7 +364,7 @@ func (a *API) rubricRemedies(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT rr.id,rr.processing_revision_id,rr.remedy_id,rr.source_notation,rr.source_remedy_spelling,rr.grade,rr.grade_scheme,rr.review_status,rr.validation_note,
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT rr.id,rr.processing_revision_id,rr.remedy_id,rr.source_notation,rr.source_remedy_spelling,rr.grade,rr.grade_scheme,rr.review_status,rr.validation_note,rr.source_style,rr.categorical_grade,
 	coalesce((SELECT jsonb_agg(jsonb_build_object('page_id',l.page_id,'document_block_id',l.document_block_id,'start_character',l.start_character,'end_character',l.end_character,'exact_text',l.exact_text) ORDER BY l.start_character) FROM rubric_remedy_locations l WHERE l.association_id=rr.id),'[]'::jsonb)
  FROM rubric_remedies rr JOIN structured_entries e ON e.id=rr.rubric_id JOIN sources s ON s.id=e.source_id
  WHERE rr.rubric_id=$1 AND rr.processing_revision_id=s.current_revision_id ORDER BY rr.created_at,rr.id`, rubricID)
@@ -367,13 +378,13 @@ func (a *API) rubricRemedies(w http.ResponseWriter, r *http.Request) {
 		var id, revision uuid.UUID
 		var remedy *uuid.UUID
 		var grade *int
-		var notation, spelling, scheme, status, note string
+		var notation, spelling, scheme, status, note, style, categorical string
 		var locations []byte
-		if err = rows.Scan(&id, &revision, &remedy, &notation, &spelling, &grade, &scheme, &status, &note, &locations); err != nil {
+		if err = rows.Scan(&id, &revision, &remedy, &notation, &spelling, &grade, &scheme, &status, &note, &style, &categorical, &locations); err != nil {
 			fail(w, 500, "could not read rubric associations")
 			return
 		}
-		out = append(out, map[string]any{"id": id, "processing_revision_id": revision, "remedy_id": remedy, "source_notation": notation, "source_remedy_spelling": spelling, "grade": grade, "grade_scheme": scheme, "review_status": status, "validation_note": note, "locations": json.RawMessage(locations)})
+		out = append(out, map[string]any{"id": id, "processing_revision_id": revision, "remedy_id": remedy, "source_notation": notation, "source_remedy_spelling": spelling, "grade": grade, "grade_scheme": scheme, "source_style": style, "categorical_grade": categorical, "review_status": status, "validation_note": note, "locations": json.RawMessage(locations)})
 	}
 	if rows.Err() != nil {
 		fail(w, 500, "could not read rubric associations")

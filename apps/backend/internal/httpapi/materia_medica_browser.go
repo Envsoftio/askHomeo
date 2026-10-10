@@ -77,7 +77,7 @@ func (a *API) mmEntry(w http.ResponseWriter, r *http.Request) {
  'label',coalesce(nullif(p.printed_label,''),nullif(b.heading,''),b.section_key,''),'position',coalesce(p.pdf_page_index,b.block_index)+1,
  'kind',CASE WHEN l.page_id IS NOT NULL THEN 'page' ELSE 'block' END,
  'original_url',CASE WHEN l.page_id IS NOT NULL THEN '/api/v1/sources/'||e.source_id||'/pdf#page='||(p.pdf_page_index+1)
- ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader' END)
+ ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader?block='||l.document_block_id||'&start='||l.start_character||'&end='||l.end_character||'#saved-passage' END)
  ORDER BY p.pdf_page_index,b.block_index,l.start_character)
  FROM structured_entry_locations l LEFT JOIN pages p ON p.id=l.page_id LEFT JOIN document_blocks b ON b.id=l.document_block_id WHERE l.entry_id=e.id),'[]'::jsonb))
  FROM eligible e JOIN remedies m ON m.id=e.remedy_id WHERE e.id=$4`, args...).Scan(&data)

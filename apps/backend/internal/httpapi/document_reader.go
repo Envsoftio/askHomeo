@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -72,11 +73,53 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 	} else {
 		body = "<pre>" + html.EscapeString(decoded) + "</pre>"
 	}
+	if r.URL.Query().Has("block") || r.URL.Query().Has("start") || r.URL.Query().Has("end") {
+		blockID, blockErr := uuid.Parse(r.URL.Query().Get("block"))
+		start, startErr := strconv.Atoi(r.URL.Query().Get("start"))
+		end, endErr := strconv.Atoi(r.URL.Query().Get("end"))
+		if blockErr != nil || startErr != nil || endErr != nil || start < 0 || end <= start {
+			fail(w, 400, "invalid saved passage target")
+			return
+		}
+		var original, reviewed, reviewStatus string
+		err = a.Store.DB.QueryRow(r.Context(), `SELECT original_text,reviewed_text,review_status FROM document_blocks WHERE id=$1 AND source_id=$2 AND processing_revision_id=$3`, blockID, sourceID, revisionID).Scan(&original, &reviewed, &reviewStatus)
+		if err != nil || (requestRole(r.Context()) != "admin" && reviewStatus != "accepted" && reviewStatus != "corrected") {
+			fail(w, 404, "saved passage target unavailable in this revision")
+			return
+		}
+		target, targetErr := readerPassageTarget(original, reviewed, start, end)
+		if targetErr != nil {
+			fail(w, 409, "saved passage target differs from reviewed text")
+			return
+		}
+		body = target + "<h2>Saved original document</h2>" + body
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = fmt.Fprint(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Saved original</title><style>body{max-width:80ch;margin:2rem auto;padding:0 1rem;font:16px/1.6 Georgia,serif;color:#20252a}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:.3rem}pre{white-space:pre-wrap}a[id]{scroll-margin-top:1rem}</style></head><body>", body, "</body></html>")
+}
+
+// Target offsets are Unicode character offsets in the immutable reviewed block,
+// not DOM offsets. Keep the exact selection separate from original typography:
+// a reviewed correction must never be presented as original source markup.
+func readerPassageTarget(original, reviewed string, start, end int) (string, error) {
+	runes := []rune(reviewed)
+	if start < 0 || end <= start || end > len(runes) {
+		return "", fmt.Errorf("invalid passage offsets")
+	}
+	note := ""
+	if original != reviewed {
+		note = "<p>This reviewed block differs from the extracted original. Compare it with the saved original below.</p>"
+	}
+	return `<section id="saved-passage"><h2>Exact reviewed passage</h2>` + note +
+		"<pre>" + html.EscapeString(string(runes[:start])) + "<mark>" + html.EscapeString(string(runes[start:end])) +
+		"</mark>" + html.EscapeString(string(runes[end:])) + "</pre></section>", nil
+}
+
+func documentReaderURL(sourceID, revisionID, blockID uuid.UUID, start, end int) string {
+	return fmt.Sprintf("/api/v1/sources/%s/document/%s/reader?block=%s&start=%d&end=%d#saved-passage", sourceID, revisionID, blockID, start, end)
 }
 
 func safeReaderHTML(decoded string) (string, error) {

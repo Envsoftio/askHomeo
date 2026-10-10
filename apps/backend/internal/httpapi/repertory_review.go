@@ -25,12 +25,14 @@ func (a *API) approveRepertoryEntry(w http.ResponseWriter, r *http.Request) {
 		Rationale  string                    `json:"rationale"`
 		Locations  []structuredLocationInput `json:"locations"`
 		Remedies   []struct {
-			RemedyID       *uuid.UUID `json:"remedy_id"`
-			CanonicalName  string     `json:"canonical_name"`
-			PreparationKey string     `json:"preparation_key"`
-			Notation       string     `json:"source_notation"`
-			Grade          *int       `json:"grade"`
-			Scheme         string     `json:"grade_scheme"`
+			RemedyID         *uuid.UUID `json:"remedy_id"`
+			CanonicalName    string     `json:"canonical_name"`
+			PreparationKey   string     `json:"preparation_key"`
+			Notation         string     `json:"source_notation"`
+			Grade            *int       `json:"grade"`
+			Scheme           string     `json:"grade_scheme"`
+			SourceStyle      string     `json:"source_style"`
+			CategoricalGrade string     `json:"categorical_grade"`
 		} `json:"remedies"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20)).Decode(&b) != nil || b.RevisionID == uuid.Nil || strings.TrimSpace(b.Heading) == "" || len(b.Heading) > 500 || strings.TrimSpace(b.Rationale) == "" || len(b.Rationale) > 4000 || len(b.Locations) == 0 || len(b.Locations) > 200 || len(b.Remedies) > 200 {
@@ -54,6 +56,14 @@ func (a *API) approveRepertoryEntry(w http.ResponseWriter, r *http.Request) {
 		m := &b.Remedies[i]
 		m.Notation = strings.TrimSpace(m.Notation)
 		m.Scheme = strings.TrimSpace(m.Scheme)
+		m.CategoricalGrade = strings.TrimSpace(m.CategoricalGrade)
+		if m.SourceStyle == "" {
+			m.SourceStyle = "unknown"
+		}
+		if !validSourceStyle(m.SourceStyle) || len(m.CategoricalGrade) > 300 || len(m.Scheme) > 2000 || (m.CategoricalGrade != "" && !conventionSupported(m.Scheme, b.Locations)) {
+			fail(w, 400, "choose a source style and include exact convention evidence for categorical grades")
+			return
+		}
 		if m.Notation == "" || len(m.Notation) > 300 || !supports(m.Notation) || (m.RemedyID == nil && (strings.TrimSpace(m.CanonicalName) == "" || strings.TrimSpace(m.PreparationKey) == "" || len(m.CanonicalName) > 300 || len(m.PreparationKey) > 300)) {
 			fail(w, 400, "each membership needs exact source notation and a verified remedy/preparation identity")
 			return
@@ -113,7 +123,7 @@ func (a *API) approveRepertoryEntry(w http.ResponseWriter, r *http.Request) {
 	}
 	eid := uuid.New()
 	_, err = tx.Exec(ctx, `INSERT INTO structured_entries(id,source_id,source_asset_id,processing_revision_id,kind,parent_id,ordinal,heading,full_path,adapter_version)
- SELECT $1,$2,$3,$4,'repertory_rubric',$5,coalesce(max(ordinal)+1,0),$6,$7,'manual-repertory-v1' FROM structured_entries WHERE processing_revision_id=$4 AND kind='repertory_rubric'`, eid, sid, asset, rev, b.ParentID, b.Heading, path)
+ SELECT $1,$2,$3,$4,'repertory_rubric',$5,coalesce(max(ordinal)+1,0),$6,$7,'manual-repertory-v2' FROM structured_entries WHERE processing_revision_id=$4 AND kind='repertory_rubric'`, eid, sid, asset, rev, b.ParentID, b.Heading, path)
 	if err != nil {
 		fail(w, 409, "could not create rubric in this revision")
 		return
@@ -145,7 +155,7 @@ func (a *API) approveRepertoryEntry(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		aid := uuid.New()
-		_, err = tx.Exec(ctx, `INSERT INTO rubric_remedies(id,rubric_id,source_id,processing_revision_id,remedy_id,source_notation,source_remedy_spelling,grade,grade_scheme) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8)`, aid, eid, sid, rev, rid, m.Notation, m.Grade, m.Scheme)
+		_, err = tx.Exec(ctx, `INSERT INTO rubric_remedies(id,rubric_id,source_id,processing_revision_id,remedy_id,source_notation,source_remedy_spelling,grade,grade_scheme,source_style,categorical_grade) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10)`, aid, eid, sid, rev, rid, m.Notation, m.Grade, m.Scheme, m.SourceStyle, m.CategoricalGrade)
 		if err != nil {
 			fail(w, 409, "duplicate or invalid membership")
 			return

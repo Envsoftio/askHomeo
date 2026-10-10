@@ -152,27 +152,38 @@ func (a *API) repertoryRubric(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	args = append(args, id)
+	offset := 0
+	if raw := r.URL.Query().Get("member_offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 || parsed > 100000 {
+			fail(w, 400, "invalid membership page")
+			return
+		}
+		offset = parsed
+	}
+	args = append(args, id, offset)
 	var data json.RawMessage
 	err := a.Store.DB.QueryRow(r.Context(), repertoryEligible+`SELECT jsonb_build_object(
  'id',e.id,'source_id',e.source_id,'processing_revision_id',e.processing_revision_id,
  'title',e.title,'edition',e.edition,'full_path',e.full_path,
+ 'member_offset',$5::int,'member_limit',50,'member_total',(SELECT count(*) FROM associations rr WHERE rr.rubric_id=e.id),
+ 'coverage','All pages enumerate reviewed eligible memberships only; complete source coverage is not established.',
  'locations',coalesce((SELECT jsonb_agg(jsonb_build_object('exact_text',l.exact_text,'start_character',l.start_character,'end_character',l.end_character,
  'page_id',l.page_id,'document_block_id',l.document_block_id,'scan',p.pdf_page_index+1,
  'original_url',CASE WHEN l.page_id IS NOT NULL THEN '/api/v1/sources/'||e.source_id||'/pdf#page='||(p.pdf_page_index+1)
- ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader' END)
+ ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader?block='||l.document_block_id||'&start='||l.start_character||'&end='||l.end_character||'#saved-passage' END)
  ORDER BY p.pdf_page_index,b.block_index,l.start_character)
  FROM structured_entry_locations l LEFT JOIN pages p ON p.id=l.page_id LEFT JOIN document_blocks b ON b.id=l.document_block_id WHERE l.entry_id=e.id),'[]'::jsonb),
  'remedies',coalesce((SELECT jsonb_agg(jsonb_build_object('id',rr.id,'remedy_id',rr.remedy_id,'canonical_name',m.canonical_name,
  'preparation_key',m.preparation_key,'source_notation',rr.source_notation,'source_remedy_spelling',rr.source_remedy_spelling,
- 'grade',rr.grade,'grade_scheme',rr.grade_scheme,'review_status',rr.review_status,
+ 'grade',rr.grade,'grade_scheme',rr.grade_scheme,'source_style',rr.source_style,'categorical_grade',rr.categorical_grade,'review_status',rr.review_status,
  'locations',coalesce((SELECT jsonb_agg(jsonb_build_object('exact_text',l.exact_text,'start_character',l.start_character,'end_character',l.end_character,
  'page_id',l.page_id,'document_block_id',l.document_block_id,
  'original_url',CASE WHEN l.page_id IS NOT NULL THEN '/api/v1/sources/'||e.source_id||'/pdf#page='||(p.pdf_page_index+1)
- ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader' END)
+ ELSE '/api/v1/sources/'||e.source_id||'/document/'||e.processing_revision_id||'/reader?block='||l.document_block_id||'&start='||l.start_character||'&end='||l.end_character||'#saved-passage' END)
  ORDER BY p.pdf_page_index,b.block_index,l.start_character)
  FROM rubric_remedy_locations l LEFT JOIN pages p ON p.id=l.page_id LEFT JOIN document_blocks b ON b.id=l.document_block_id WHERE l.association_id=rr.id),'[]'::jsonb))
- ORDER BY m.canonical_name,m.preparation_key,rr.id) FROM associations rr JOIN remedies m ON m.id=rr.remedy_id WHERE rr.rubric_id=e.id),'[]'::jsonb))
+ ORDER BY m.canonical_name,m.preparation_key,rr.id) FROM (SELECT rr.* FROM associations rr JOIN remedies rm ON rm.id=rr.remedy_id WHERE rr.rubric_id=e.id ORDER BY rm.canonical_name,rm.preparation_key,rr.id LIMIT 50 OFFSET $5) rr JOIN remedies m ON m.id=rr.remedy_id),'[]'::jsonb))
  FROM eligible e WHERE e.id=$4`, args...).Scan(&data)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

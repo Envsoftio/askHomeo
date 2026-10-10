@@ -9,7 +9,7 @@ type Remedy={id:string,canonical_name:string,preparation_key:string}
 type Ancestor={id:string,heading:string}
 type Rubric={ancestors:Ancestor[],id:string,source_id:string,parent_id:string|null,heading:string,full_path:string[],title:string,author:string,edition:string,repository:string,verified_remedy_count:number,has_children:boolean}
 type Location={exact_text:string,start_character:number,end_character:number,original_url:string}
-type Detail={id:string,locations:Location[],remedies:{id:string,remedy_id:string,canonical_name:string,preparation_key:string,source_notation:string,grade:number|null,grade_scheme:string,locations:Location[]}[]}
+type Detail={id:string,member_offset:number,member_limit:number,member_total:number,coverage:string,locations:Location[],remedies:{id:string,remedy_id:string,canonical_name:string,preparation_key:string,source_notation:string,grade:number|null,grade_scheme:string,source_style:string,categorical_grade:string,locations:Location[]}[]}
 const catalog=ref<{sources:Book[],chapters:{source_id:string,chapter:string}[],remedies:Remedy[]}>({sources:[],chapters:[],remedies:[]})
 const scope=ref('all'),sourceIDs=ref<string[]>([]),query=ref(''),chapter=ref(''),remedy=ref(''),provider=ref('')
 const providers=computed(()=>[...new Set(catalog.value.sources.map(s=>s.repository).filter(Boolean))].sort())
@@ -30,10 +30,10 @@ async function search(reset=false){
  catch(e){if(current===generation)error.value=e instanceof Error?e.message:'Could not search rubrics.'}
  finally{if(current===generation)loading.value=false}
 }
-async function inspect(row:Rubric){
- if(detail.value?.id===row.id){detail.value=null;return}
+async function inspect(row:Rubric,memberOffset=0,paging=false){
+ if(!paging&&detail.value?.id===row.id){detail.value=null;return}
  const current=++detailGeneration;detail.value=null;detailLoading.value=row.id;error.value=''
- try{const result=await api<Detail>('/repertory/rubrics/'+row.id);if(current===detailGeneration)detail.value=result}
+ try{const result=await api<Detail>('/repertory/rubrics/'+row.id+'?member_offset='+memberOffset);if(current===detailGeneration)detail.value=result}
  catch(e){if(current===detailGeneration)error.value=e instanceof Error?e.message:'Could not inspect rubric.'}
  finally{if(current===detailGeneration)detailLoading.value=''}
 }
@@ -90,10 +90,13 @@ onUnmounted(()=>{generation++;detailGeneration++})
     <div v-for="(loc,i) in detail.locations" :key="i"><blockquote>{{loc.exact_text}}</blockquote><a :href="loc.original_url" target="_blank" rel="noopener">Open saved original</a> · characters {{loc.start_character}}–{{loc.end_character}}</div>
     <p>Original links open the saved document or PDF page; the exact reviewed excerpts are shown here.</p>
     <p>Grades describe this source’s notation, not clinical efficacy or model confidence. Unknown grades remain unknown.</p>
+    <p>{{detail.member_total}} reviewed membership records. {{detail.coverage}}</p>
+    <div v-if="detail.member_total>detail.member_limit" class="rubric-actions"><button :disabled="detail.member_offset===0" @click="inspect(row,Math.max(0,detail.member_offset-detail.member_limit),true)">Previous memberships</button><span>{{detail.member_offset+1}}–{{Math.min(detail.member_offset+detail.member_limit,detail.member_total)}} of {{detail.member_total}}</span><button :disabled="detail.member_offset+detail.member_limit>=detail.member_total" @click="inspect(row,detail.member_offset+detail.member_limit,true)">Next memberships</button></div>
     <p v-if="!detail.remedies.length">No verified remedy associations are available for this rubric.</p>
     <section v-for="association in detail.remedies" :key="association.id" class="association">
-     <h3>{{association.source_notation}} — {{association.canonical_name}}</h3>
+     <h3><span :class="['source-notation',association.source_style]">{{association.source_notation}}</span> — {{association.canonical_name}}</h3>
      <p>{{association.preparation_key}} · {{association.grade===null?'Grade unknown':`Grade ${association.grade} · ${association.grade_scheme}`}}</p>
+     <p>Reviewed typography: {{association.source_style.replace('_',' ')}}<span v-if="association.categorical_grade"> · Source category: {{association.categorical_grade}} · Convention: {{association.grade_scheme}}</span></p>
      <button @click="reverse(association.remedy_id)">Find rubrics containing this remedy</button>
      <button @click="emit('materiaMedica',association.remedy_id)">Read in Materia Medica</button>
      <details><summary>Membership evidence</summary><div v-for="(loc,i) in association.locations" :key="i"><blockquote>{{loc.exact_text}}</blockquote><a :href="loc.original_url" target="_blank" rel="noopener">Open saved original</a> · characters {{loc.start_character}}–{{loc.end_character}}</div></details>
@@ -106,4 +109,5 @@ onUnmounted(()=>{generation++;detailGeneration++})
 
 <style scoped>
 .repertory-browser{max-width:1100px;margin:2rem auto;padding:0 1rem}.repertory-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;align-items:end}.repertory-filters label{display:flex;flex-direction:column;gap:.4rem}.repertory-filters fieldset{grid-column:1/-1}.repertory-filters fieldset label{flex-direction:row;align-items:center}.repertory-filters input[type=checkbox]{width:auto}.rubric{border:1px solid #cbd5e1;border-radius:10px;padding:1rem;margin:1rem 0}.rubric h2{font-size:1.1rem;margin:.5rem 0}.rubric-actions{display:flex;gap:.7rem;flex-wrap:wrap;align-items:center}.rubric-detail{margin-top:1rem;border-top:1px solid #cbd5e1;padding-top:1rem}.association{border-top:1px solid #cbd5e1;margin-top:1rem;padding-top:.5rem}.association h3{font-size:1rem}blockquote{white-space:pre-wrap;overflow-wrap:anywhere;margin:.7rem 0;padding:.7rem;border-left:3px solid #64748b}.coverage,small{color:#526174}
+.source-notation.ordinary{font-weight:normal}.source-notation.italic{font-style:italic;font-weight:normal}.source-notation.bold{font-weight:bold}.source-notation.bold_italic{font-style:italic;font-weight:bold}
 </style>

@@ -22,3 +22,19 @@ func TestSavedOriginalReaderPreservesTypographyWithoutActiveContent(t *testing.T
 		}
 	}
 }
+
+func TestReaderPassageTargetUnicodeAndCorrections(t *testing.T) {
+	got, err := readerPassageTarget("original", "é猫 <script> & next", 1, 2)
+	if err != nil || !strings.Contains(got, "é<mark>猫</mark> &lt;script&gt; &amp; next") || !strings.Contains(got, "differs from the extracted original") || strings.Contains(got, "<script>") {
+		t.Fatalf("incorrect or unsafe exact target: %q %v", got, err)
+	}
+	for _, span := range [][2]int{{-1, 2}, {1, 1}, {2, 1}, {0, 100}} {
+		if _, err := readerPassageTarget("é猫", "é猫", span[0], span[1]); err == nil {
+			t.Fatalf("accepted invalid span %v", span)
+		}
+	}
+	got, err = readerPassageTarget("é猫", "é猫", 0, 2)
+	if err != nil || strings.Contains(got, "differs from") || !strings.Contains(got, "<mark>é猫</mark>") {
+		t.Fatalf("unchanged target %q: %v", got, err)
+	}
+}

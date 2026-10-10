@@ -6,7 +6,7 @@ Status: Consolidated product requirements, scope assessment, source catalogue, c
 
 ## 1. Purpose and document authority
 
-Capture the product discussion through 2026-10-09, including the seven-module scope audit, India-first launch decision, international ambition, 56-source collection catalogue, hosted production models with pluggable development inference, inherited POC UX, launch workflows, and the GLM-first research/citation quality direction. Preserve the existing clarification that **a patient case is optional**. Future work must support both general knowledge questions and a later structured case workflow using a shared, source-grounded knowledge foundation.
+Capture the product discussion through 2026-10-10, including the four-service research contract, seven-module scope audit, India-first launch decision, international ambition, 56-source collection catalogue, hosted production models with pluggable development inference, inherited POC UX, launch workflows, and the GLM-first research/citation quality direction. Preserve the existing clarification that **a patient case is optional**. Future work must support both general knowledge questions and a later structured case workflow using a shared, source-grounded knowledge foundation.
 
 Read this document alongside:
 
@@ -18,7 +18,7 @@ This document extends product direction beyond the POC. It does not move all fut
 
 Requirement status is explicit below:
 
-- **Confirmed direction:** the user's requested two entry points, all seven modules, preparation of data for all seven from day one where feasible, India as the first market, fast incremental delivery, hosted production inference, development provider choice, and reuse of the POC UX direction.
+- **Confirmed direction:** the four user-facing research services in section 26.0, the user's requested two entry points, all seven modules, preparation of data for all seven from day one where feasible, India as the first market, fast incremental delivery, hosted production inference, development provider choice, and reuse of the POC UX direction.
 - **Inherited requirement:** constraints already established in the POC PRD and handoff.
 - **Proposed scope:** features from the supplied strategy discussion to refine into future releases.
 - **Hypothesis/open decision:** commercial assumptions, sequencing, and architecture details that still need validation.
@@ -26,6 +26,8 @@ Requirement status is explicit below:
 The conversation and earlier strategy text are the source of commercial proposals. Sections 13–24 consolidate the scope and data discussion. Sections 25–30 add the AnswerThis review, future workspace requirements, and public website plan. Competitor interface observations are distinguished from public marketing claims; market sizes, performance guarantees, security certifications, and customer counts have not been independently verified. Source links reflect the research performed in this conversation; they are not blanket commercial-use permissions or evidence that files have been imported.
 
 Planning navigation: [competitor evidence](#25-answerthis-review-and-adoption-decisions), [research workspace](#26-future-research-workspace-requirements), [landing-page-message-and-content](#27-public-website-positioning-and-homepage-requirements), [public sitemap](#28-public-website-pages-and-acquisition-workflows), [development tasks](#29-competitor-derived-development-backlog-and-delivery-order), [release acceptance](#30-acceptance-measurement-and-maintenance-for-the-new-direction).
+
+**User-facing product contract — confirmed 2026-10-10:** [Four research services](#260-confirmed-user-facing-product-contract--2026-10-10): Write a literature review, Ask a research question, Find papers, and Find research gaps. Ingestion, RAG and reviewed quality remain the first milestone. These are confirmed product outcomes delivered incrementally, not a statement that all four services are implemented or available at launch.
 
 Latest technical discussion: [UI-to-AI-search design](#31-technical-direction-from-ui-to-ai-search) and [day-one-data-for-all-seven-modules](#32-day-one-data-coverage-across-all-seven-modules). These sections qualify earlier sequencing: collect across every module from the outset; feature implementation can remain incremental. No exclusive choice between classical literature and paper research is required for data collection.
 
@@ -954,6 +956,33 @@ Observed weaknesses to avoid: a cramped wide evidence grid in a split view; many
 
 ## 26. Future research workspace requirements
 
+### 26.0 Confirmed user-facing product contract — 2026-10-10
+
+Build a homeopathy research workspace with four primary services. Users can start research without a patient case or project. These services define the user-facing product contract; source ingestion, retrieval, evidence verification and citations form their shared foundation.
+
+| ID | Service and user promise | Required output and acceptance |
+|---|---|---|
+| SERVICE-01 | **Write a literature review** — A cited review from a search or your library. | Accept a topic/question and an explicit source selection from search results or the library. Produce a structured narrative synthesis with themes, agreements, disagreements, limitations, passage-linked claims and a bibliography. Record the included sources and search/library scope. Missing evidence remains explicit. An editable draft must retain citations and flag changed claims for support rechecking. A narrative review must not be presented as a completed systematic review. |
+| SERVICE-02 | **Ask a research question** — Get an answer backed by papers, with citations. | Accept a question and optional source/category filters; retrieve eligible evidence, answer the supported parts and show exact supporting passages and originals. Return partial or insufficient evidence when appropriate. Books and other approved literature may also support questions, but identify them accurately: a historical book citation is not a research-paper finding. Save the question, effective scope, result and citation lineage. |
+| SERVICE-03 | **Find papers** — Discover papers relevant to your topic. | Search supported scholarly discovery services using a topic and supported filters; return relevant bibliographic records with identifiers, source links and access depth. Deduplicate records while preserving study/version distinctions, save selected references to the library, and route eligible abstracts/full text through preparation before synthesis. Record actual queries, services, filters, search date and failures. Linked-book crawling or passage search alone does not satisfy this service. |
+| SERVICE-04 | **Find research gaps** — Explore potential unanswered questions in your field. | Use an explicit literature set to identify reported limitations, conflicting findings and potentially underexplored questions. Link each proposed gap to supporting evidence and explain the inference. Record search date, coverage and unavailable material. Distinguish author-stated gaps from system suggestions; no results in our corpus cannot establish worldwide novelty. Insufficient coverage must yield a limitation rather than an invented gap. |
+
+**Library scope:** Initially, “your library” means a user's saved references and selected accessible platform sources. A saved metadata record is useful for discovery but is not automatically usable full-text evidence. Private user uploads remain future scope under section 34; this contract does not introduce them into the first release.
+
+**Shared behavior:** All four services preserve access, rights, publication and compatible-index requirements wherever ingested evidence is used. Discovery-only records remain distinct from prepared evidence. Save actual inputs, progress, source revisions, outputs and coverage; reopening saved work must not regenerate it. Quick/Deep are research-depth options within supported workflows, not substitutes for the four task types. Unavailable services remain hidden or clearly labelled planned under WS-02.
+
+**Delivery order:**
+
+1. Complete and validate source ingestion and RAG on representative books and research papers, including reviewed citation and answer quality, as required by section 36. Include verification within implementation acceptance under section 41.
+2. Deliver and validate Ask a research question over the prepared library.
+3. Deliver Find papers with saved references and eligible content preparation.
+4. Deliver Write a literature review from library selections or search results.
+5. Deliver Find research gaps using the recorded evidence and search coverage.
+
+Repertory and Materia Medica remain supplementary reference tools using the shared source lifecycle. Their necessary ingestion and evidence work supports this foundation; broader reference or patient-case features must not displace the four research outcomes. The seven-module long-term direction remains intact.
+
+This contract takes precedence over earlier user-facing priorities and proposed service delivery sequences. It does not mark a service complete, replace the current ING task acceptance criteria, set release dates, or move all four services into the current POC. Each service requires demonstrated end-to-end acceptance before being advertised as available.
+
 ### 26.1 Information architecture and user journeys
 
 Recommended default: **research-first, case-optional**, with source-linked answers and prominent domain tools. This refines the prior recommendation without changing the confirmed two-entry-point product model. Exact labels can be tested with India pilot users.
@@ -1028,7 +1057,7 @@ Provider portability remains section 18's requirement: hosted inference in produ
 ### 26.5 Advanced capabilities retained for later planning
 
 - **Systematic review:** protocol/question, eligibility criteria, reproducible searches, deduplication, title/abstract and full-text screening, exclusion reasons, extraction, human appraisal and reporting. Add dual reviewers/conflict resolution when the audience needs them. A narrative literature summary is not a completed systematic review.
-- **Research gaps:** propose unresolved questions supported by the retrieved literature; record search coverage/date and contradictory findings. A sparse corpus cannot establish worldwide novelty.
+- **Research gaps:** a confirmed primary service under SERVICE-04 in section 26.0, delivered after the ingestion/RAG, question-answering, paper-discovery and literature-review milestones. Its later delivery does not make it optional product scope; a sparse corpus cannot establish worldwide novelty.
 - **Citation graph and bibliometrics:** related-paper navigation, publication trends and author networks based on available bibliographic links, with coverage and identity-resolution limits.
 - **Charts, slides and writing assistance:** generate from reviewed tables and linked sources. Generic paraphrasing, plagiarism/AI detection claims and presentation generation are not beta prerequisites.
 - **MCP/API/institutional connections:** scoped permissions, revocation, audit and private-data controls; implement after an actual integration need is identified.
@@ -1259,6 +1288,8 @@ This extends section 21. IDs below are task candidates, not created tickets or c
 | ADV-05 | Team editing, advanced drafts, presentation exports | Saved briefs, access rules and export fidelity established. |
 
 ### 29.4 Recommended execution sequence
+
+Historical proposal: the confirmed four-service sequence in section 26.0 and research-core priority in section 36 take precedence over the sequence below.
 
 1. **Baseline and reusable shell:** existing BASE tasks plus WORK-01–03. Prepare SITE-01 and original homepage content alongside this work.
 2. **Demonstrate value publicly:** SITE-02–04 and SITE-08–11 in proportion to the offered pilot. Use a reviewed static sample first. A waitlist can precede self-service signup; paid plans wait for actual entitlements and billing readiness.
@@ -2289,3 +2320,6 @@ The separate Materia Medica page searches verified identities/source spellings, 
 Acceptance includes PDF-page and HTML/TXT-block review, stale-text/revision rejection, parent invalidation, cited convention validation, unknown grades, multiple providers/books/preparations, exact Unicode excerpts and scope/access isolation. Synthetic checks do not certify complete source coverage or live-model quality. Cross-document continuation, automatic repertory extraction, exact reader targeting, historical casebooks, structured Quick/Deep answers and human-reviewed baseline evaluation remain open in ING-06.
 
 **RAG preparation acceptance — 2026-10-10:** Each added PDF/HTML/TXT source must reach reviewed text and rights approval before publication queues exact passage embeddings. Show extraction, review, indexing, failure and compatible-ready states separately from verified reference-structure coverage. Ask searches only eligible ready passages; a model change requires reindexing. The synthetic source-to-RAG integration test now covers manual reference review through worker indexing and category-tagged passages. Verified structured rubric answer generation still needs its own evidence, citation and baseline evaluation gate.
+
+
+**ING-06 notation and closure audit — 2026-10-10:** Migration 052 separates reviewed visual notation and source-defined categorical grades from nullable numeric grades. The review UI requires exact convention evidence for categorical interpretation; no typography-to-number conversion is inferred. A conservative `colon-rows-v1` helper suggests exact reviewed heading/abbreviation rows for manual mapping, leaving hierarchy, aliases and grades unverified. The repertory browser now pages through verified memberships in groups of 50 with an explicit coverage limitation. These changes do not enable structured Quick/Deep answers or complete generic extraction. See the [current ING-06 completion audit](tasks/ING-06.md#current-completion-audit--2026-10-10) for the remaining A–F implementation and live-evaluation gates. Migration and application rebuild are required for activation; checks used an isolated database and synthetic browser fixture.

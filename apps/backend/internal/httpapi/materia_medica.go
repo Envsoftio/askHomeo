@@ -48,13 +48,17 @@ func (a *API) mmUnits(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, "Could not read source text")
 			return
 		}
-		units = append(units, map[string]any{"id": uid, "kind": kind, "position": pos, "label": label, "text": text, "text_sha256": mmTextHash(text), "ready": ready})
+		suggestions := []rubricSuggestion{}
+		if ready {
+			suggestions = suggestRubricRows(text)
+		}
+		units = append(units, map[string]any{"id": uid, "kind": kind, "position": pos, "label": label, "text": text, "text_sha256": mmTextHash(text), "ready": ready, "rubric_suggestions": suggestions})
 	}
 	if rows.Err() != nil {
 		fail(w, 500, "Could not read source text")
 		return
 	}
-	write(w, 200, map[string]any{"revision_id": rev, "units": units})
+	write(w, 200, map[string]any{"revision_id": rev, "units": units, "suggestion_adapter": repertorySuggestionVersion})
 }
 
 func (a *API) listRemedies(w http.ResponseWriter, r *http.Request) {

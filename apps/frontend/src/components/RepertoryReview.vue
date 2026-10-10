@@ -2,10 +2,11 @@
 import {computed,ref,watch} from 'vue'
 import {api} from '../api'
 const props=defineProps<{sourceId:string,status:string}>()
-type Unit={id:string,kind:string,position:number,label:string,text:string,text_sha256:string,ready:boolean}
+type Suggestion={heading:string,notations:string[],start_character:number,end_character:number,exact_text:string}
+type Unit={rubric_suggestions:Suggestion[],id:string,kind:string,position:number,label:string,text:string,text_sha256:string,ready:boolean}
 type Location={text_sha256:string,page_id?:string,document_block_id?:string,start_character:number,end_character:number,exact_text:string}
 type Entry={id:string,kind:string,ordinal:number,full_path:string[],review_status:string}
-type Member={remedy_id:string,canonical_name:string,preparation_key:string,source_notation:string,grade:string|number,grade_scheme:string}
+type Member={remedy_id:string,canonical_name:string,preparation_key:string,source_notation:string,grade:string|number,grade_scheme:string,source_style:string,categorical_grade:string}
 const units=ref<Unit[]>([]),entries=ref<Entry[]>([]),selections=ref<Location[]>([]),members=ref<Member[]>([])
 const remedies=ref<{id:string,canonical_name:string,preparation_key:string}[]>([]),identitySearch=ref('')
 const revision=ref(''),offset=ref(0),parent=ref(''),heading=ref(''),reason=ref(''),confirmed=ref(false),busy=ref(false),error=ref(''),notice=ref('')
@@ -22,6 +23,12 @@ async function load(){
 watch(()=>props.sourceId,()=>{offset.value=0;revision.value='';selections.value=[];entries.value=[];members.value=[];parent.value='';heading.value='';reason.value='';notice.value='';run(load)},{immediate:true})
 function select(unit:Unit,event:Event){const el=event.target as HTMLTextAreaElement;ranges.set(unit.id,[Array.from(unit.text.slice(0,el.selectionStart)).length,Array.from(unit.text.slice(0,el.selectionEnd)).length])}
 function add(unit:Unit){const chars=Array.from(unit.text);let [start,end]=ranges.get(unit.id)||[0,chars.length];if(start===end){start=0;end=chars.length}if(!end)return;selections.value.push({...(unit.kind==='page'?{page_id:unit.id}:{document_block_id:unit.id}),start_character:start,end_character:end,exact_text:chars.slice(start,end).join(''),text_sha256:unit.text_sha256})}
+function useSuggestion(unit:Unit,suggestion:Suggestion){
+ heading.value=suggestion.heading
+ selections.value=[{...(unit.kind==='page'?{page_id:unit.id}:{document_block_id:unit.id}),start_character:suggestion.start_character,end_character:suggestion.end_character,exact_text:suggestion.exact_text,text_sha256:unit.text_sha256}]
+ members.value=suggestion.notations.map(source_notation=>({source_notation,remedy_id:'',canonical_name:'',preparation_key:'',grade:'',grade_scheme:'',source_style:'unknown',categorical_grade:''}))
+ notice.value='Unverified row copied into the review form. Choose its parent, resolve every remedy identity and inspect the original before approval. No grades were inferred.'
+}
 async function save(){
  const associations=members.value.map(m=>{
   const grade=String(m.grade).trim()===''?null:Number(m.grade)
@@ -44,23 +51,27 @@ async function revoke(entry:Entry){if(!reason.value.trim())throw new Error('Ente
     <a :href="unit.kind==='page'?`/api/v1/sources/${sourceId}/pages/${unit.position}/image`:`/api/v1/sources/${sourceId}/document/${revision}/reader`" target="_blank" rel="noopener">Open saved original</a>
     <p v-if="!unit.ready">Complete this page/block’s text review before mapping it.</p>
     <textarea :value="unit.text" readonly rows="6" :aria-label="`Repertory text ${unit.position+1}`" @select="select(unit,$event)" />
+    <details v-if="unit.rubric_suggestions?.length"><summary>Suggested rubric rows (unverified)</summary><p>Recognizes simple heading: abbreviation lists only, up to 50 rows per text unit. Hierarchy, identities and typography still need review. Unsupported layouts remain manual.</p><div v-for="(suggestion,i) in unit.rubric_suggestions" :key="i"><pre>{{suggestion.exact_text}}</pre><button :disabled="busy||selections.length>0||!!heading.trim()||members.length>0" @click="useSuggestion(unit,suggestion)">Use this row in an empty review form</button></div></details>
     <button :disabled="busy||!unit.ready||!unit.text||selections.length>=200" @click="add(unit)">Add selected evidence (or whole page/block)</button>
    </article>
    <div class="actions"><button :disabled="busy||offset===0" @click="offset=Math.max(0,offset-10);run(load)">Previous 10</button><button :disabled="busy||units.length<10" @click="offset+=10;run(load)">Next 10</button></div>
+   <button :disabled="busy||(!selections.length&&!members.length&&!heading)" @click="selections=[];members=[];heading='';confirmed=false;notice=''">Clear draft mapping</button>
    <h4>Selected supporting spans: {{selections.length}}</h4><ol><li v-for="(loc,i) in selections" :key="i"><pre>{{loc.exact_text}}</pre><button :disabled="busy" @click="selections.splice(i,1)">Remove span</button></li></ol>
    <label>Parent rubric<select v-model="parent"><option value="">New chapter / root rubric</option><option v-for="entry in parents" :key="entry.id" :value="entry.id">{{entry.full_path.join(' → ')}}</option></select></label>
    <label>Exact heading for this rubric<input v-model="heading" maxlength="500" /></label>
-   <p>Include the heading, relevant remedy list and needed context. For known numeric grades, also select the source’s grading convention. Ordinary/italic/bold notation alone does not justify a numeric conversion.</p>
+   <p>Include the heading, relevant remedy list and needed context. For known numeric grades, also select the source’s grading convention. Record checked typography separately. A categorical or numeric grade needs the source’s exact convention; typography alone does not justify a numeric conversion.</p>
    <label>Find an existing remedy identity<input v-model="identitySearch" /></label><button :disabled="busy" @click="run(async()=>{remedies=await api(`/remedies?q=${encodeURIComponent(identitySearch)}`)})">Find identities</button>
    <fieldset v-for="(member,i) in members" :key="i"><legend>Verified membership {{i+1}}</legend>
     <label>Exact source abbreviation / notation<input v-model="member.source_notation" maxlength="300" /></label>
     <label>Remedy identity<select v-model="member.remedy_id"><option value="">Create or reuse name + preparation</option><option v-for="r in remedies" :key="r.id" :value="r.id">{{r.canonical_name}} · {{r.preparation_key}}</option></select></label>
     <template v-if="!member.remedy_id"><label>Canonical name<input v-model="member.canonical_name" maxlength="300" /></label><label>Preparation identity<input v-model="member.preparation_key" maxlength="300" /></label></template>
+    <label>Typography checked against original<select v-model="member.source_style"><option value="unknown">Unknown / not checked</option><option value="ordinary">Ordinary</option><option value="italic">Italic</option><option value="bold">Bold</option><option value="bold_italic">Bold italic</option><option value="other">Other source notation</option></select></label>
+    <label>Source-defined categorical grade (optional)<input v-model="member.categorical_grade" maxlength="300" placeholder="Only when explained by the source convention" /></label>
     <label>Known numeric grade (blank = unknown)<input v-model="member.grade" type="number" min="1" max="32767" step="1" /></label>
-    <label v-if="String(member.grade).trim()">Exact source grading-convention quote<textarea v-model="member.grade_scheme" rows="2" maxlength="2000" /></label>
+    <label v-if="String(member.grade).trim()||member.categorical_grade.trim()">Exact source grading-convention quote<textarea v-model="member.grade_scheme" rows="2" maxlength="2000" /></label>
     <button :disabled="busy" @click="members.splice(i,1)">Remove membership</button>
    </fieldset>
-   <button :disabled="busy||members.length>=200" @click="members.push({remedy_id:'',canonical_name:'',preparation_key:'',source_notation:'',grade:'',grade_scheme:''})">Add verified membership</button>
+   <button :disabled="busy||members.length>=200" @click="members.push({remedy_id:'',canonical_name:'',preparation_key:'',source_notation:'',grade:'',grade_scheme:'',source_style:'unknown',categorical_grade:''})">Add verified membership</button>
    <label>Review reason<textarea v-model="reason" rows="2" maxlength="4000" /></label>
    <label class="confirmation"><input v-model="confirmed" type="checkbox" /> I checked the hierarchy, every selected span, remedy/preparation identities and any grade convention against the original. Unverified memberships are omitted.</label>
    <button :disabled="busy||!confirmed||!heading.trim()||!reason.trim()||!selections.length" @click="run(save)">Approve rubric and memberships</button>

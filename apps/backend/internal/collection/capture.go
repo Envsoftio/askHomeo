@@ -335,7 +335,7 @@ func (w *CaptureWorker) finishCapture(ctx context.Context, snapshotID, claimToke
 	if !owned {
 		return nil
 	}
-	_, err = tx.Exec(ctx, `UPDATE collection_links l SET state=CASE WHEN i.state='failed' THEN 'target_failed' WHEN l.fragment<>'' AND NOT l.fragment=ANY(i.anchors) THEN 'missing_anchor' ELSE 'resolved' END FROM collection_items i WHERE l.snapshot_id=$1 AND i.snapshot_id=l.snapshot_id AND i.requested_url=l.target_url AND l.state IN ('queued','duplicate_or_cycle')`, snapshotID)
+	_, err = tx.Exec(ctx, `UPDATE collection_links l SET state=CASE WHEN i.state='failed' THEN 'target_failed' WHEN l.fragment<>'' AND NOT l.fragment=ANY(i.anchors) THEN 'missing_anchor' ELSE 'resolved' END FROM collection_items i WHERE l.snapshot_id=$1 AND i.snapshot_id=l.snapshot_id AND i.requested_url=l.target_url AND l.state IN ('queued','duplicate_or_cycle','target_failed','missing_anchor')`, snapshotID)
 	if err != nil {
 		return err
 	}

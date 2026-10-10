@@ -195,7 +195,7 @@ func (a *API) resumeCollection(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = tx.Exec(r.Context(), `UPDATE collection_items SET state='queued',attempts=0,error='' WHERE snapshot_id=$1 AND state='failed'`, snapshotID)
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE collection_snapshots SET state='queued',started_at=NULL,finished_at=NULL,incomplete_reasons='{}' WHERE id=$1`, snapshotID)
+		_, err = tx.Exec(r.Context(), `UPDATE collection_snapshots SET state='queued',started_at=NULL,finished_at=NULL,incomplete_reasons=ARRAY(SELECT reason FROM unnest(incomplete_reasons) reason WHERE reason='link limit reached') WHERE id=$1`, snapshotID)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO collection_capture_jobs(snapshot_id,state,next_run_at,lease_until,lease_token,last_error) VALUES($1,'queued',now(),NULL,NULL,'') ON CONFLICT(snapshot_id) DO UPDATE SET state='queued',next_run_at=now(),lease_until=NULL,lease_token=NULL,last_error='',updated_at=now()`, snapshotID)
@@ -432,6 +432,11 @@ func (a *API) activateCollection(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "activation rationale required")
 		return
 	}
+	if a.Model == nil {
+		fail(w, 503, "collection activation requires an active embedding configuration")
+		return
+	}
+	cfg := a.Model.Config
 	tx, err := a.Store.DB.Begin(r.Context())
 	if err != nil {
 		fail(w, 500, "collection store unavailable")
@@ -459,7 +464,7 @@ func (a *API) activateCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var candidates, unready, configCount, excludedInvalid int
-	err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded AND (i.source_id IS NULL OR s.status<>'published' OR s.rights_status<>'allowed' OR s.superseded_at IS NOT NULL OR ir.status<>'ready' OR ai.index_run_id IS NULL)),count(DISTINCT ir.embedding_config_id) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND i.review_excluded AND (i.source_id IS NULL OR s.status<>'review' OR EXISTS(SELECT 1 FROM document_blocks b WHERE b.processing_revision_id=s.current_revision_id AND b.review_status IN ('accepted','corrected','pending')))) FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id WHERE i.snapshot_id=$1`, snapshotID).Scan(&candidates, &unready, &configCount, &excludedInvalid)
+	err = tx.QueryRow(r.Context(), `SELECT count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded AND (i.source_id IS NULL OR s.status<>'published' OR s.rights_status<>'allowed' OR s.superseded_at IS NOT NULL OR s.removed_at IS NOT NULL OR ir.status<>'ready' OR ai.index_run_id IS NULL OR ec.model_id IS DISTINCT FROM $2 OR ec.model_revision IS DISTINCT FROM $3 OR ec.dimensions IS DISTINCT FROM $4 OR pub.source_id IS DISTINCT FROM s.id OR pub.processing_revision_id IS DISTINCT FROM s.published_revision_id)),count(DISTINCT ir.embedding_config_id) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND NOT i.review_excluded),count(*) FILTER (WHERE i.state='fetched' AND i.role='content_candidate' AND i.review_excluded AND (i.source_id IS NULL OR s.status<>'review' OR EXISTS(SELECT 1 FROM document_blocks b WHERE b.processing_revision_id=s.current_revision_id AND b.review_status IN ('accepted','corrected','pending')))) FROM collection_items i LEFT JOIN sources s ON s.id=i.source_id LEFT JOIN active_indexes ai ON ai.source_id=s.id LEFT JOIN index_runs ir ON ir.id=ai.index_run_id LEFT JOIN embedding_configs ec ON ec.id=ir.embedding_config_id LEFT JOIN publications pub ON pub.id=ir.publication_id WHERE i.snapshot_id=$1`, snapshotID, cfg.EmbeddingModel, cfg.EmbeddingRevision, cfg.Dimensions).Scan(&candidates, &unready, &configCount, &excludedInvalid)
 	if err != nil {
 		fail(w, 500, "could not verify collection readiness")
 		return

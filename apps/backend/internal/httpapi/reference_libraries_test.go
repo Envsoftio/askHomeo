@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -46,6 +47,7 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 	}
 	call := func(method, path string, body any, want int) map[string]any {
 		t.Helper()
+		path, _, _ = strings.Cut(path, "#") // URL fragments are not sent by a browser.
 		raw, _ := json.Marshal(body)
 		req := httptest.NewRequest(method, "/api/v1"+path, strings.NewReader(string(raw)))
 		req.Header.Set("Authorization", "Bearer "+a.Token)
@@ -68,12 +70,18 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 			provider = "Provider B"
 		}
 		text := "ACONITE — café. MIND FEAR dark Acon. Bold = grade 2."
+		if format == "html" {
+			text += " Italic indicates emphasis.\nFear at night: R00., R01.\n"
+			for n := 0; n < 56; n++ {
+				text += fmt.Sprintf(" R%02d.", n)
+			}
+		}
 		if format == "pdf" {
 			exec(`INSERT INTO sources(id,source_key,title,author,edition,repository,pdf_path,pdf_sha256,pdf_bytes,page_count,status,literature_categories) VALUES($1,$2,$3,'Author A','Edition 1',$4,'fixture.pdf',repeat('a',64),1,1,'review',ARRAY['materia_medica','repertory'])`, sid, uuid.NewString(), "Reference "+format, provider)
 		} else {
 			content, contentType := text, "text/plain"
 			if format == "html" {
-				content = "<p>" + text + "</p>"
+				content = "<p>" + strings.Replace(text, "Acon.", "<i>Acon.</i>", 1) + "</p>"
 				contentType = "text/html"
 			}
 			sid, err = store.ImportDocument(ctx, strings.NewReader(content), core.DocumentImport{Title: "Reference " + format, Author: "Author B", Edition: "Edition 2", Repository: provider, ContentType: contentType, Transport: "upload"})
@@ -96,6 +104,21 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 		}
 		body := func(parent any, heading string, members any) map[string]any {
 			return map[string]any{"revision_id": rev, "parent_id": parent, "heading": heading, "rationale": "Checked synthetic source", "locations": []structuredLocationInput{loc}, "remedies": members}
+		}
+		if format == "html" {
+			review := call("GET", "/sources/"+sid.String()+"/review-units", nil, 200)
+			if review["suggestion_adapter"] != repertorySuggestionVersion {
+				t.Fatal("missing adapter provenance")
+			}
+			unit := review["units"].([]any)[0].(map[string]any)
+			candidates := unit["rubric_suggestions"].([]any)
+			if len(candidates) != 1 || candidates[0].(map[string]any)["heading"] != "Fear at night" {
+				t.Fatalf("missing row suggestions: %v", candidates)
+			}
+			candidate := candidates[0].(map[string]any)
+			if string([]rune(text)[int(candidate["start_character"].(float64)):int(candidate["end_character"].(float64))]) != candidate["exact_text"] {
+				t.Fatal("suggestion changed source wording")
+			}
 		}
 		rootID := call("POST", "/sources/"+sid.String()+"/repertory-entries", body(nil, "MIND", []any{}), 201)["id"].(string)
 		prep := "whole plant"
@@ -143,7 +166,27 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 		rootID = call("POST", "/sources/"+sid.String()+"/repertory-entries", body(nil, "MIND", []any{}), 201)["id"].(string)
 		membership["grade"] = nil
 		membership["grade_scheme"] = ""
+		if format == "html" {
+			membership["source_style"] = "italic"
+			membership["categorical_grade"] = "emphasized"
+			membership["grade_scheme"] = "invented convention"
+			call("POST", "/sources/"+sid.String()+"/repertory-entries", body(rootID, "dark", []any{membership}), 400)
+			membership["grade_scheme"] = "Italic indicates emphasis."
+		}
 		child = call("POST", "/sources/"+sid.String()+"/repertory-entries", body(rootID, "dark", []any{membership}), 201)["id"].(string)
+		pageRubric := ""
+		if format == "html" {
+			if _, err := store.DB.Exec(ctx, `UPDATE rubric_remedies SET categorical_grade='invented',grade_scheme='not in the source' WHERE rubric_id=$1`, child); err == nil {
+				t.Fatal("database accepted unsupported categorical convention")
+			}
+			many := []any{}
+			for n := 0; n < 55; n++ {
+				many = append(many, map[string]any{"canonical_name": fmt.Sprintf("Synthetic %02d", n), "preparation_key": "fixture only", "source_notation": fmt.Sprintf("R%02d.", n)})
+			}
+			pageRubric = call("POST", "/sources/"+sid.String()+"/repertory-entries", body(rootID, "FEAR", many), 201)["id"].(string)
+			// Unreviewed associations never enter a paginated count or list.
+			call("POST", "/structured-entries/"+pageRubric+"/remedies", map[string]any{"source_notation": "R55.", "source_remedy_spelling": "R55.", "locations": []structuredLocationInput{loc}}, 201)
+		}
 		mm := call("POST", "/sources/"+sid.String()+"/mm-entries", map[string]any{"revision_id": rev, "spelling": "ACONITE", "canonical_name": "Fixture aconite", "preparation_key": prep, "rationale": "Reviewed source remedy identity", "locations": []structuredLocationInput{loc}}, 201)
 		mmIDs = append(mmIDs, mm["id"].(string))
 		remedyIDs = append(remedyIDs, mm["remedy_id"].(string))
@@ -158,6 +201,48 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 		exec(`INSERT INTO chunk_embeddings(chunk_id,embedding_config_id,embedding,input_hash) SELECT id,$2,'[1,0,0]',repeat('a',64) FROM chunks WHERE source_id=$1`, sid, config)
 		exec(`INSERT INTO active_indexes(source_id,index_run_id) VALUES($1,$2)`, sid, run)
 		exec(`UPDATE sources SET status='published',rights_status='allowed',published_revision_id=current_revision_id WHERE id=$1`, sid)
+		rep := call("GET", "/repertory/rubrics/"+child, nil, 200)
+		member := rep["remedies"].([]any)[0].(map[string]any)
+		if member["grade"] != nil {
+			t.Fatal("unknown numeric grade was invented")
+		}
+		if format == "html" {
+			if member["source_style"] != "italic" || member["categorical_grade"] != "emphasized" || member["grade_scheme"] != "Italic indicates emphasis." {
+				t.Fatalf("notation lost: %v", member)
+			}
+			seen := map[string]bool{}
+			for _, off := range []int{0, 50, 100} {
+				page := call("GET", fmt.Sprintf("/repertory/rubrics/%s?member_offset=%d", pageRubric, off), nil, 200)
+				want := 50
+				if off == 50 {
+					want = 5
+				}
+				if off == 100 {
+					want = 0
+				}
+				if page["member_total"] != float64(55) || len(page["remedies"].([]any)) != want {
+					t.Fatalf("incorrect page: %v", page)
+				}
+				for _, item := range page["remedies"].([]any) {
+					id := item.(map[string]any)["id"].(string)
+					if seen[id] {
+						t.Fatal("duplicate page membership")
+					}
+					seen[id] = true
+				}
+			}
+			if len(seen) != 55 {
+				t.Fatal("membership pagination lost records")
+			}
+			for _, off := range []string{"-1", "100001", "bad"} {
+				call("GET", "/repertory/rubrics/"+pageRubric+"?member_offset="+off, nil, 400)
+			}
+			if _, err := store.DB.Exec(ctx, `UPDATE rubric_remedies SET source_style='ordinary' WHERE rubric_id=$1`, child); err == nil {
+				t.Fatal("published notation was mutable")
+			}
+		} else if member["source_style"] != "unknown" || member["categorical_grade"] != "" {
+			t.Fatal("default source notation inferred")
+		}
 		detail := call("GET", "/materia-medica/entries/"+mm["id"].(string), nil, 200)
 		support := detail["locations"].([]any)[0].(map[string]any)
 		if support["exact_text"] != text {
@@ -165,6 +250,33 @@ func TestReferenceLibrariesIntegration(t *testing.T) {
 		}
 		if format != "pdf" {
 			call("GET", strings.TrimPrefix(support["original_url"].(string), "/api/v1"), nil, 200)
+			url := documentReaderURL(sid, rev, uid, 10, 14)
+			url, _, _ = strings.Cut(url, "#")
+			read := func(target, token string, want int) string {
+				t.Helper()
+				req := httptest.NewRequest("GET", target, nil)
+				if token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				res := httptest.NewRecorder()
+				handler.ServeHTTP(res, req)
+				if res.Code != want {
+					t.Fatalf("reader status %d want %d: %s", res.Code, want, res.Body.String())
+				}
+				return res.Body.String()
+			}
+			got := read(url, a.ReviewerToken, 200)
+			if !strings.Contains(got, "<mark>café</mark>") || !strings.Contains(got, "differs from the extracted original") || !strings.Contains(got, "Saved original document") {
+				t.Fatalf("reader lost exact reviewed Unicode span or correction provenance: %s", got)
+			}
+			read(url, "", 401)
+			read(strings.Replace(url, uid.String(), uuid.NewString(), 1), a.Token, 404)
+			read(strings.Replace(url, rev.String(), uuid.NewString(), 1), a.Token, 404)
+			read(strings.Replace(url, "end=14", "end=99999", 1), a.Token, 409)
+			read(strings.Replace(url, "start=10", "start=-1", 1), a.Token, 400)
+			exec(`UPDATE sources SET rights_status='denied' WHERE id=$1`, sid)
+			read(url, a.ReviewerToken, 403)
+			exec(`UPDATE sources SET rights_status='allowed' WHERE id=$1`, sid)
 		}
 		call("POST", "/sources/"+sid.String()+"/repertory-entries", body(nil, "MIND", []any{}), 409)
 	}
