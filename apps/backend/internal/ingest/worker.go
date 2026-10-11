@@ -65,28 +65,46 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 	}()
 
+	embedErrors := make(chan error, 1)
+	go func() {
+		embedErrors <- w.runQueue(ctx, []string{"embed"})
+	}()
+	return w.runQueueWithErrors(ctx, []string{"ingest", "triage", "text_qa"}, embedErrors)
+}
+
+func (w *Worker) runQueue(ctx context.Context, kinds []string) error {
+	return w.runQueueWithErrors(ctx, kinds, nil)
+}
+
+func (w *Worker) runQueueWithErrors(ctx context.Context, kinds []string, otherErrors <-chan error) error {
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		if err := w.once(ctx); err != nil {
+		if err := w.onceKinds(ctx, kinds); err != nil {
 			return err
 		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case err := <-otherErrors:
+			return err
 		case <-ticker.C:
 		}
 	}
 }
 func (w *Worker) once(ctx context.Context) error {
+	return w.onceKinds(ctx, []string{"ingest", "triage", "text_qa", "embed"})
+}
+
+func (w *Worker) onceKinds(ctx context.Context, kinds []string) error {
 	if err := w.reconcileExpiredJobs(ctx); err != nil {
 		return err
 	}
 	var jobID, sourceID uuid.UUID
 	var kind string
 	err := w.Store.DB.QueryRow(ctx, `UPDATE jobs SET status='running',attempts=attempts+1,lease_until=now()+interval '90 seconds',updated_at=now()
- WHERE id=(SELECT id FROM jobs WHERE kind IN ('ingest','triage','text_qa','embed') AND attempts<5 AND run_after<=now() AND (status='queued' OR (status='running' AND lease_until<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1)
- RETURNING id,source_id,kind`).Scan(&jobID, &sourceID, &kind)
+ WHERE id=(SELECT id FROM jobs WHERE kind=ANY($1::text[]) AND attempts<5 AND run_after<=now() AND (status='queued' OR (status='running' AND lease_until<now())) ORDER BY CASE kind WHEN 'ingest' THEN 0 WHEN 'triage' THEN 1 WHEN 'text_qa' THEN 2 ELSE 3 END, created_at FOR UPDATE SKIP LOCKED LIMIT 1)
+ RETURNING id,source_id,kind`, kinds).Scan(&jobID, &sourceID, &kind)
 	if err != nil {
 		if strings.Contains(err.Error(), "no rows") {
 			return nil
@@ -259,7 +277,16 @@ func (w *Worker) recordRevisionTools(ctx context.Context, sourceID uuid.UUID) er
 		}
 		versions[tool.key] = strings.TrimSpace(strings.SplitN(string(output), "\n", 2)[0])
 	}
-	config := map[string]any{"text_extraction": "gs txtwrite", "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": passage.Version}
+	textExtraction := "gs txtwrite"
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		textExtraction = "pdftotext -layout"
+		step, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if output, err := exec.CommandContext(step, "pdftotext", "-v").CombinedOutput(); err == nil {
+			versions["poppler"] = strings.TrimSpace(strings.SplitN(string(output), "\n", 2)[0])
+		}
+		cancel()
+	}
+	config := map[string]any{"text_extraction": textExtraction, "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": passage.Version}
 	configBytes, _ := json.Marshal(config)
 	configHash := sha256.Sum256(configBytes)
 	config["processing_config_sha256"] = hex.EncodeToString(configHash[:])
@@ -358,9 +385,17 @@ func extractLocalPage(ctx context.Context, pdf string, index int) (string, strin
 	page := strconv.Itoa(index + 1)
 	step, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(step, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=txtwrite", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+output, "-f", pdf)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
+	method := "PDF text"
+	if _, err := exec.LookPath("pdftotext"); err == nil {
+		cmd := exec.CommandContext(step, "pdftotext", "-f", page, "-l", page, "-layout", "-enc", "UTF-8", pdf, output)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	} else {
+		cmd := exec.CommandContext(step, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=txtwrite", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+output, "-f", pdf)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
+		}
 	}
 	b, err := os.ReadFile(output)
 	if err != nil {
@@ -370,17 +405,20 @@ func extractLocalPage(ctx context.Context, pdf string, index int) (string, strin
 		return "", "", errors.New("page text is too large")
 	}
 	raw := strings.TrimSpace(string(b))
-	if len([]rune(raw)) >= 80 && pdfocr.SuspiciousText(raw) == "" {
-		return raw, "PDF text", nil
+	if len([]rune(raw)) >= 40 && pdfocr.SuspiciousText(raw) == "" {
+		return raw, method, nil
 	}
 	ocr, err := freshOCR(ctx, pdf, index)
 	if err != nil {
+		if raw != "" {
+			return raw, method, nil
+		}
 		return "", "", err
 	}
 	if len([]rune(strings.TrimSpace(ocr))) > len([]rune(raw)) || (pdfocr.SuspiciousText(raw) != "" && strings.TrimSpace(ocr) != "") {
 		return strings.TrimSpace(ocr), "Tesseract OCR", nil
 	}
-	return raw, "PDF text", nil
+	return raw, method, nil
 }
 func (w *Worker) fetch(ctx context.Context, address string) (string, error) {
 	u, err := url.Parse(address)

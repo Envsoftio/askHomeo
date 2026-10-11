@@ -129,17 +129,23 @@ func SuspiciousText(text string) string {
 	return ""
 }
 func lowConfidence(tsv string) bool {
-	words := 0
+	words, uncertain, veryLow := 0, 0, 0
 	for _, line := range strings.Split(tsv, "\n") {
 		fields := strings.SplitN(line, "\t", 12)
 		if len(fields) != 12 || fields[0] != "5" || strings.TrimSpace(fields[11]) == "" {
 			continue
 		}
 		confidence, err := strconv.ParseFloat(fields[10], 64)
-		if err != nil || confidence < 80 {
-			return true
+		if err != nil {
+			continue
 		}
 		words++
+		if confidence < 60 {
+			uncertain++
+		}
+		if confidence < 35 {
+			veryLow++
+		}
 	}
-	return words == 0
+	return words == 0 || (words >= 8 && (uncertain >= 5 && float64(uncertain)/float64(words) > 0.15 || veryLow >= 3 && float64(veryLow)/float64(words) > 0.05))
 }

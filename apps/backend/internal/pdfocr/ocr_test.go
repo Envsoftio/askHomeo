@@ -28,9 +28,11 @@ func TestWordConfidence(t *testing.T) {
 		want bool
 	}{
 		{"5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t96.2\tMedica", false},
-		{"5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t79.9\tMcdica", true},
+		{"5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t79.9\tMcdica", false},
 		{"5\t1\t1\t1\t1\t1\t0\t0\t10\t10\tbroken\tword", true},
 		{"level\tpage_num\tblock_num", true},
+		{strings.Repeat("5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t95\tclear\n", 20) + strings.Repeat("5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t45\tuncertain\n", 2), false},
+		{strings.Repeat("5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t95\tclear\n", 20) + strings.Repeat("5\t1\t1\t1\t1\t1\t0\t0\t10\t10\t45\tuncertain\n", 6), true},
 	} {
 		if got := lowConfidence(tc.tsv); got != tc.want {
 			t.Errorf("confidence = %v, want %v", got, tc.want)

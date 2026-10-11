@@ -59,11 +59,26 @@ func TestFreshOCRFarringtonMarginFallback(t *testing.T) {
 	}
 }
 
-func TestComparePageTextFlagsSingleWrongWord(t *testing.T) {
+func TestComparePageTextToleratesMinorOCRDifferences(t *testing.T) {
 	clean := "every other work on Materia Medica " + strings.Repeat("patient remedy symptoms motion pain fever cough treatment joints swelling ", 10)
-	for _, broken := range []string{strings.Replace(clean, "Medica", "Mcdica", 1), strings.Replace(clean, "work", "w(U'k", 1), strings.Replace(clean, "on", "no", 1)} {
-		if got := comparePageText(broken, clean); !got.suspect {
-			t.Fatalf("single wrong word passed: %+v", got)
-		}
+	if got := comparePageText(strings.Replace(clean, "on", "no", 1), clean); got.suspect {
+		t.Fatalf("minor OCR difference flagged: %+v", got)
+	}
+	if got := comparePageText(strings.Replace(clean, "work", "w(U'k", 1), clean); !got.suspect {
+		t.Fatalf("malformed word passed: %+v", got)
+	}
+	missing := strings.ReplaceAll(clean, "patient remedy symptoms motion pain ", "")
+	if got := comparePageText(missing, clean); !got.suspect {
+		t.Fatalf("missing content passed: %+v", got)
+	}
+}
+
+func TestComparePageTextAllowsTableReadingOrder(t *testing.T) {
+	header := "Remedy Dose Finding Observation Result Notes Followup "
+	rows := strings.Repeat("Arnica 30C swelling decreased after treatment mild improvement ", 9)
+	stored := header + rows
+	ocr := "Finding Observation Result Notes Followup Remedy Dose " + rows
+	if got := comparePageText(stored, ocr); got.suspect {
+		t.Fatalf("table column order flagged: %+v", got)
 	}
 }

@@ -15,6 +15,22 @@ func TestMeasurePGMRejectsIncompleteRender(t *testing.T) {
 	}
 }
 
+func TestScanTriageOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		metrics      scanMetrics
+		kind, status string
+	}{
+		{scanMetrics{}, "blank", "auto_checked"},
+		{scanMetrics{dark: 0.0003, edges: 0.001}, "unclassified", "needs_review"},
+		{scanMetrics{dark: 0.0001, edges: 0.007}, "unclassified", "needs_review"},
+	} {
+		kind, status, _ := tc.metrics.outcome()
+		if kind != tc.kind || status != tc.status {
+			t.Errorf("metrics %+v => %s/%s, want %s/%s", tc.metrics, kind, status, tc.kind, tc.status)
+		}
+	}
+}
+
 func TestNashScanTriage(t *testing.T) {
 	if _, err := exec.LookPath("gs"); err != nil {
 		t.Skip("Ghostscript not installed")

@@ -496,7 +496,7 @@ func (a *API) pages(w http.ResponseWriter, r *http.Request) {
 	}
 	showOmitted := r.URL.Query().Get("show_omitted") == "true"
 	attention := r.URL.Query().Get("needs_attention") == "true"
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,pdf_page_index,scan_page_index,coalesce(printed_label,''),review_status,page_kind,coalesce(review_note,''),text_raw,image_url,triage_reason,text_qa_status,text_qa_reason,text_revision FROM pages WHERE source_id=$1 AND (($4 AND (page_kind IN ('unclassified','missing_text') OR (page_kind='text' AND text_qa_status IN ('suspect','pending')))) OR (NOT $4 AND scan_page_index >= $2 AND scan_page_index < $2+30 AND ($3 OR page_kind NOT IN ('blank','book_info')))) ORDER BY scan_page_index`, id, start, showOmitted, attention)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,pdf_page_index,scan_page_index,coalesce(printed_label,''),review_status,page_kind,coalesce(review_note,''),text_raw,image_url,triage_reason,text_qa_status,text_qa_reason,text_revision FROM pages WHERE source_id=$1 AND (($4 AND (page_kind IN ('unclassified','missing_text') OR (page_kind='text' AND text_qa_status='suspect'))) OR (NOT $4 AND scan_page_index >= $2 AND scan_page_index < $2+30 AND ($3 OR page_kind NOT IN ('blank','book_info')))) ORDER BY scan_page_index`, id, start, showOmitted, attention)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return

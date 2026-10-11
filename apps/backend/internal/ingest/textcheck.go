@@ -3,6 +3,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 
@@ -24,45 +25,42 @@ func comparePageText(stored, fresh string) textCheck {
 	}
 	oldWords := qaWords.FindAllString(strings.ToLower(stored), -1)
 	newWords := qaWords.FindAllString(strings.ToLower(fresh), -1)
-	if len(newWords) < 40 {
+	if len(newWords) < 8 {
 		return textCheck{true, "A fresh OCR pass could not read enough words from this scan; check the text against the image.", 0}
 	}
 	counts := make(map[string]int, len(oldWords))
 	for _, word := range oldWords {
 		counts[word]++
 	}
-	matched, firstMatched := 0, 0
-	for i, word := range newWords {
+	matched := 0
+	for _, word := range newWords {
 		if counts[word] > 0 {
 			matched++
 			counts[word]--
-			if i < 30 {
-				firstMatched++
-			}
 		}
 	}
 	coverage := float64(matched) / float64(len(newWords))
-	openingWindows := 0
+	openingMatched := 0
+	openingCount := len(newWords)
+	if openingCount > 12 {
+		openingCount = 12
+	}
 	oldSequence := " " + strings.Join(oldWords, " ") + " "
-	for i := 0; i+3 <= len(newWords) && i < 12; i++ {
-		if strings.Contains(oldSequence, " "+strings.Join(newWords[i:i+3], " ")+" ") {
-			openingWindows++
+	for _, word := range newWords[:openingCount] {
+		if strings.Contains(oldSequence, " "+word+" ") {
+			openingMatched++
 		}
 	}
-	if len(oldWords)*4 < len(newWords)*3 {
+	if float64(len(oldWords)) < float64(len(newWords))*0.7 {
 		return textCheck{true, "The stored text is substantially shorter than a fresh OCR pass; check for missing lines.", coverage}
 	}
-	if coverage < 1 || len(oldWords) != len(newWords) {
+	// OCR and embedded text routinely disagree on punctuation, short words and
+	// column order. Only substantial missing content is an actionable warning.
+	if coverage < 0.88 || math.Abs(float64(len(oldWords)-len(newWords))) > math.Max(12, float64(len(newWords))*0.35) {
 		return textCheck{true, fmt.Sprintf("Fresh OCR and stored text differ (%.0f%% word agreement); check this scan.", coverage*100), coverage}
 	}
-	if strings.Join(oldWords, " ") != strings.Join(newWords, " ") {
-		return textCheck{true, "Fresh OCR and stored text have different word order; check the scan for misplaced lines.", coverage}
-	}
-	if openingWindows < 2 {
-		return textCheck{true, "The opening lines may be missing or out of order in stored text; compare the top of this scan.", coverage}
-	}
-	if firstMatched < 14 && len(newWords) >= 60 {
-		return textCheck{true, "The top of the scan may be missing from stored text; compare its opening lines.", coverage}
+	if len(newWords) >= 40 && openingMatched < 6 {
+		return textCheck{true, "The opening lines may be missing from stored text; compare the top of this scan.", coverage}
 	}
 	return textCheck{false, fmt.Sprintf("Fresh OCR agreed with stored text (%.0f%% word agreement).", coverage*100), coverage}
 }

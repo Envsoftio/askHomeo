@@ -114,6 +114,7 @@ const questionJob=computed(()=>answerJobs.value.find(job=>job.id===currentJobID.
 const evaluationReport=ref<EvaluationReport|null>(null)
 const claimChecks=ref<ClaimCheck[]>([])
 const sourceActivityGroups=computed(()=>{const groups=new Map<string,{source_id:string,title:string,jobs:SourceJob[]}>();for(const job of sourceJobs.value){const group=groups.get(job.source_id)||{source_id:job.source_id,title:job.title,jobs:[]};group.jobs.push(job);groups.set(job.source_id,group)}return [...groups.values()]})
+const activeIngestJob=computed(()=>sourceJobs.value.find(job=>job.source_id===active.value?.id&&job.kind==='ingest'))
 const runningActivity=computed(()=>answerJobs.value.filter(job=>job.status==='working'||job.status==='waiting'||job.status==='retrying').length+new Set(sourceJobs.value.filter(job=>job.status==='running'||job.status==='queued').map(job=>job.source_id)).size)
 const attentionActivity=computed(()=>answerJobs.value.filter(job=>job.status==='failed').length+new Set([...sourceJobs.value.filter(job=>job.status==='failed').map(job=>job.source_id),...sources.value.filter(source=>source.status==='review'&&source.rights_status!=='denied').map(source=>source.id)]).size)
 const answerParagraphs=computed(()=>answer.value.split(/\n\s*\n/).filter(Boolean).map(paragraph=>paragraph.split(/(\[E(?:[1-9]|10)\])/g).filter(Boolean)))
@@ -1805,7 +1806,8 @@ onUnmounted(()=>{
               <li :class="{ done: index?.status === 'ready' }">Ask</li>
             </ol>
             <p v-if="active.status === 'queued' || active.status === 'processing'">
-              Reading scanned pages: {{ active.pages_read }} of {{ active.pages_total }}.
+              <template v-if="active.status === 'queued' || activeIngestJob?.status === 'queued'">Waiting for a preparation worker. Reading has not started yet.</template>
+              <template v-else>Reading scanned pages: {{ active.pages_read }} of {{ active.pages_total }}.</template>
               You can leave this screen and return.
             </p>
             <p v-else-if="active.status === 'failed'" class="error">
@@ -2015,7 +2017,7 @@ onUnmounted(()=>{
                 >
               </div>
               <p v-if="needsAttention && !pages.length" class="good">
-                No uncertain scans are waiting for a decision.
+                No scans currently need your decision.<template v-if="detail?.text_qa_status === 'queued' || detail?.text_qa_status === 'running'"> Automatic text checking is still in progress; any new findings will appear here.</template>
               </p>
               <div class="page-list">
                 <button
@@ -2024,7 +2026,7 @@ onUnmounted(()=>{
                   :class="{ selected: selectedPage?.id === p.id }"
                   @click="selectPage(p)"
                 >
-                  Scan {{ p.scan_page_index + 1 }}
+                  Scan {{ p.scan_page_index + 1 }} · PDF {{ p.pdf_page_index + 1 }}
                   <small
                     >{{
                       p.printed_label ? "page " + p.printed_label : "page unlabeled"
@@ -2035,7 +2037,7 @@ onUnmounted(()=>{
               </div>
               <div v-if="selectedPage" :key="selectedPage.id" class="page-review">
                 <h3>
-                  Scan {{ selectedPage.scan_page_index + 1 }}
+                  Scan {{ selectedPage.scan_page_index + 1 }} · PDF page {{ selectedPage.pdf_page_index + 1 }}
                   <small>{{
                     selectedPage.printed_label
                       ? "· printed page " + selectedPage.printed_label
@@ -2208,6 +2210,12 @@ onUnmounted(()=>{
           Saved questions continue while the services are running. Open a finished answer
           or retry a failed one.
         </p>
+        <details class="step">
+          <summary>How source preparation works</summary>
+          <p>First, the worker reads a PDF page by page or extracts text from an HTML page. A queued job has not started; its count stays at zero while it waits.</p>
+          <p>Next, the app checks extracted text and asks you to review uncertain pages or text blocks, confirm source details and rights, then publish. Publishing starts passage preparation: the worker splits approved text and creates a search embedding for each passage.</p>
+          <p>“Ready to ask” means the passage index is complete. A published source in a linked collection may also need that collection activated before it appears in book-wide questions.</p>
+        </details>
         <p v-if="!answerJobs.length && !sourceJobs.length" class="empty">
           No activity yet. Add a source or ask a question to start.
         </p>

@@ -20,6 +20,13 @@ type scanMetrics struct{ dark, edges float64 }
 // handwriting, cover, or diagram stays in the review queue.
 func (m scanMetrics) blank() bool { return m.dark <= 0.0002 && m.edges <= 0.0067 }
 
+func (m scanMetrics) outcome() (kind, status, reason string) {
+	if m.blank() {
+		return "blank", "auto_checked", "No meaningful marks detected in the rendered scan; automatically omitted from answers."
+	}
+	return "unclassified", "needs_review", "Visual content detected; check whether this is a cover, diagram, book information, or missing text."
+}
+
 func measurePGM(data []byte) (scanMetrics, error) {
 	pos := 0
 	next := func() string {
@@ -153,15 +160,11 @@ func (w *Worker) triage(ctx context.Context, jobID, sourceID uuid.UUID) error {
 		if err != nil {
 			return fmt.Errorf("scan %d: %w", p.index, err)
 		}
-		blank := metrics.blank()
-		reason := "Visual content detected; check whether this is a cover, diagram, book information, or missing text."
-		if blank {
-			reason = "No meaningful marks detected in the rendered scan; automatically omitted from answers."
-		}
+		kind, status, reason := metrics.outcome()
 		_, err = w.Store.DB.Exec(ctx, `UPDATE pages SET triaged_at=now(),triage_reason=$2,
- page_kind=CASE WHEN $3 AND page_kind='blank' THEN 'unclassified' WHEN NOT $3 AND page_kind='unclassified' THEN 'blank' ELSE page_kind END,
- review_status=CASE WHEN $3 AND page_kind='blank' THEN 'needs_review' WHEN NOT $3 AND page_kind='unclassified' THEN 'auto_checked' ELSE review_status END
- WHERE id=$1 AND triaged_at IS NULL`, p.id, reason, !blank)
+ page_kind=$3,review_status=$4
+ WHERE id=$1 AND triaged_at IS NULL AND review_status='needs_review'
+	AND page_kind IN ('text','unclassified','blank')`, p.id, reason, kind, status)
 		if err != nil {
 			return fmt.Errorf("save scan %d triage: %w", p.index, err)
 		}
