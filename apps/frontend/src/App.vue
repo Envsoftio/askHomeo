@@ -1465,11 +1465,22 @@ onUnmounted(()=>{
         <button class="back-link" @click="tab = 'sources'">
           ← Back to source library
         </button>
-        <p class="eyebrow">SOURCE REVIEW</p>
-        <h1>Prepare a source for research</h1>
-        <p v-if="!active">Choose a book in Sources to see what needs checking.</p>
+        <div class="review-heading">
+          <p class="eyebrow">SOURCE REVIEW</p>
+          <h1>Prepare a source for research</h1>
+          <p>Check the extracted content and permissions before this source is used in answers.</p>
+        </div>
+        <div v-if="!active" class="review-empty">
+          <span class="review-empty-icon" aria-hidden="true">▤</span>
+          <h2>Select a source to review</h2>
+          <p>Open a document from the source library to see its page checks, categories, and publishing steps.</p>
+          <button class="primary-button" @click="tab = 'sources'">Browse sources</button>
+        </div>
         <template v-else>
-          <h2>{{ active.title }}</h2>
+          <div class="review-document-heading">
+            <div><span class="review-document-label">CURRENT SOURCE</span><h2>{{ active.title }}</h2><p>{{ active.author || 'Author not recorded' }}</p></div>
+            <span class="review-document-status">{{ stateText(active) }}</span>
+          </div>
           <div v-if="detail" class="step">
             <h3>Literature category</h3>
             <p>
@@ -2435,22 +2446,25 @@ onUnmounted(()=>{
           </button>
         </div>
       </section>
-      <section v-else>
-        <h1>Ask your sources</h1>
-        <p>
-          {{ readyCount }} prepared {{ readyCount === 1 ? "source is" : "sources are" }} available.
-          Searches {{ sourceSelectionMode === "all" ? "all prepared sources" : `${selectedBookCount} selected book(s) or source(s)` }} within the category filters below. Ask about a source, what an
-          author reports, or how authors compare. Open each citation to check the passage
-          against its original scan. Historical claims are not modern clinical evidence.
-        </p>
-        <div v-if="readyCount === 0" class="empty">
-          Prepare a source before asking questions.
-          <button @click="tab = 'sources'">View sources</button>
+      <section v-else class="ask-workspace">
+        <div class="ask-heading">
+          <p class="eyebrow">RESEARCH WORKSPACE</p>
+          <h1>Ask your sources</h1>
+          <p>
+            Ask what a source says, compare authors, or explore a remedy. Choose the sources and literature categories below, then open citations to check each passage against the original. Historical claims are not modern clinical evidence.
+          </p>
         </div>
-        <form v-else @submit.prevent="ask">
-          <label for="question">Your question</label
+        <div v-if="readyCount === 0" class="empty">
+          <h2>Your library is not ready for questions yet</h2>
+          <p>Prepare a source to start asking questions grounded in its original passages.</p>
+          <button class="primary-button" @click="tab = 'sources'">View sources</button>
+        </div>
+        <form v-else class="ask-form" @submit.prevent="ask">
+          <div class="ask-form-intro"><h2>New question</h2><span>{{ readyCount }} {{ readyCount === 1 ? 'source' : 'sources' }} ready</span></div>
+          <label class="ask-question-label" for="question">Your question</label
           ><textarea
             id="question"
+            class="ask-question"
             v-model="question"
             rows="3"
             maxlength="1000"
@@ -2459,6 +2473,7 @@ onUnmounted(()=>{
           <p v-if="question.trim() && !validQuestion" class="input-hint">
             Add a topic or remedy name with at least 3 letters, such as “mood” or “Nux”.
           </p>
+          <div class="ask-scope-grid">
           <fieldset class="source-picker">
             <legend>Literature categories</legend>
             <p>
@@ -2517,12 +2532,12 @@ onUnmounted(()=>{
               exactly one paper.
             </p>
           </fieldset>
-          <label for="research-mode">Research depth</label
-          ><select id="research-mode" v-model="researchMode">
+          </div>
+          <div class="ask-submit-row"><label for="research-mode">Research depth<select id="research-mode" v-model="researchMode">
             <option value="quick">Quick answer · one search per source</option>
             <option value="deep">Detailed research · three focused searches</option>
-          </select>
-          <button :disabled="busy || !validQuestion || !selectionValid">
+          </select></label>
+          <button class="primary-button" :disabled="busy || !validQuestion || !selectionValid">
             {{
               busy
                 ? "Saving question…"
@@ -2530,7 +2545,7 @@ onUnmounted(()=>{
                 ? "Research in detail"
                 : "Ask"
             }}
-          </button>
+          </button></div>
         </form>
         <div v-if="!answer && questionJob" class="step" role="status">
           <p><strong>Your question:</strong> {{ questionJob.stage }}.</p>

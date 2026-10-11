@@ -42,7 +42,7 @@ function reset() {search.value = ''; filter.value = 'all';category.value='all'}
 </script>
 
 <template>
-  <section class="library" aria-labelledby="library-title" :aria-busy="loading">
+  <section class="library" :class="{'library-readonly':!canAdd}" aria-labelledby="library-title" :aria-busy="loading">
     <div class="library-heading"><div><h2 id="library-title">Source library</h2><p>Original documents and their progress toward becoming searchable.</p></div><span class="total">{{count('all')}} sources</span></div>
     <div class="library-filters" aria-label="Filter sources by status">
       <button v-for="item in filters" :key="item.id" :aria-pressed="filter===item.id" @click="filter=item.id">{{item.label}} <span>{{count(item.id)}}</span></button>
@@ -57,12 +57,11 @@ function reset() {search.value = ''; filter.value = 'all';category.value='all'}
     <div v-else-if="!sources.length" class="library-empty"><span class="empty-symbol" aria-hidden="true">＋</span><h3>Build your research library</h3><p>Add a book or paper. We’ll read the pages and show you what needs checking.</p><button v-if="canAdd" class="primary-button" @click="emit('add')">Add your first source</button><p v-else>An administrator can add sources to the shared library.</p></div>
     <div v-else-if="!filtered.length" class="library-empty"><h3>No matching sources</h3><p>Try another title, author or status.</p><button @click="reset">Clear filters</button></div>
     <template v-else>
-      <div class="library-columns" aria-hidden="true"><span>Document</span><span>Status</span><span>Actions</span></div>
+      <div class="library-columns" aria-hidden="true"><span>Document</span><span>Status</span><span v-if="canAdd">Actions</span></div>
       <div v-for="source in visible" :key="source.id" class="library-item">
       <button class="library-row" @click="emit('open',source)">
         <span class="document-info"><span class="document-icon" aria-hidden="true">▤</span><span><strong>{{source.title}}</strong><small>{{source.author||'Author not recorded'}} · {{source.document_format.toUpperCase()}}<template v-if="source.document_format==='pdf'&&source.pages_total"> · {{source.pages_total}} pages</template></small><small>{{source.literature_categories.join(', ').replaceAll('_',' ')}} · {{source.evidence_category.replaceAll('_',' ')}}</small><small v-if="source.supersedes_source_id">Reprocessed edition</small></span></span>
-        <span class="document-status"><span class="status-badge" :class="source.group">{{source.state}}</span><progress v-if="source.status==='processing'&&source.pages_total" :value="source.pages_read" :max="source.pages_total" :aria-label="`${source.title}: pages read`" /></span>
-        <span class="row-action">{{source.group==='attention'?'Review source':source.group==='processing'?'View progress':'View source'}} <span aria-hidden="true">↗</span></span>
+        <span class="document-status"><span class="status-badge" :class="source.group">{{source.state}}</span><progress v-if="source.status==='processing'&&source.pages_total" :value="source.pages_read" :max="source.pages_total" :aria-label="`${source.title}: pages read`" /><span class="row-action">{{source.group==='attention'?'Review source':source.group==='processing'?'View progress':'View source'}} <span aria-hidden="true">↗</span></span></span>
       </button>
       <div v-if="canAdd" class="source-delete-actions"><button v-if="!source.removed" class="remove-source" type="button" :disabled="busy" :aria-label="`Remove ${source.title} from library`" @click="requestRemoval(source)">Remove</button><button class="remove-source" type="button" :disabled="busy" :aria-label="`Permanently delete ${source.title}`" @click="requestDeletion(source)">Delete permanently</button><small v-if="source.removed">Removed from library</small></div>
       <div v-if="deleting?.id===source.id" class="removal-confirmation" role="region" aria-label="Permanent deletion confirmation">
@@ -95,4 +94,23 @@ function reset() {search.value = ''; filter.value = 'all';category.value='all'}
 .library-toolbar{display:flex;align-items:end;gap:1rem;padding:1.2rem 1.5rem}.library-toolbar label{font-size:.8rem;font-weight:600;color:#596962}.library-toolbar input,.library-toolbar select{display:block;margin-top:.4rem;font-weight:400;min-height:42px}.library-search{flex:1}.library-search input{width:100%;max-width:440px}
 .library-columns,.library-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(160px,.55fr) 115px;gap:1.5rem;align-items:center;padding:1rem 1.5rem}.library-columns{background:#f7f9f7;border-block:1px solid #e5eae7;color:#748078;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding-block:.7rem}.library-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;border-bottom:1px solid #edf0ee}.library-row{width:100%;border:0;border-radius:0;text-align:left;background:#fff;padding-right:0}.library-row:hover{background:#f7faf8}.remove-source{margin-right:1.5rem;font-size:.78rem;color:#9b3232;border-color:#efd3d3;background:#fff}.removal-confirmation{grid-column:1/-1;padding:1rem 1.5rem;background:#fff9f6;border-top:1px solid #efd3d3}.removal-confirmation p{max-width:75ch;font-size:.85rem;line-height:1.5}.removal-confirmation label{display:block;max-width:600px;font-size:.85rem}.removal-confirmation textarea{display:block;width:100%;margin:.4rem 0}.removal-confirmation div{display:flex;gap:.5rem}.document-info{display:flex;gap:.9rem;align-items:center;min-width:0}.document-info>span:last-child{min-width:0}.document-info strong{font-size:.93rem;line-height:1.5;display:block;overflow-wrap:anywhere}.document-info small{display:block;margin-top:.3rem;color:#748078;font-size:.8rem}.document-icon{display:grid;place-items:center;width:38px;height:46px;flex-shrink:0;background:#eff4f0;border:1px solid #dee7e0;border-radius:6px;font-size:1.4rem;color:#52755d}.document-status{display:grid;gap:.5rem;justify-items:start}.status-badge{font-size:.75rem;line-height:1.45;border-radius:6px;padding:.3rem .5rem;background:#edf1ee;color:#657169}.status-badge.ready{background:#e8f4ec;color:#226141}.status-badge.attention{background:#fff2dc;color:#895717}.status-badge.processing{background:#edf2ff;color:#496396}.row-action{font-size:.8rem;font-weight:600;color:#35684d}.row-action span{margin-left:.3rem}progress{width:100%;max-width:150px;height:5px;accent-color:#547b61}.library-empty{text-align:center;padding:3.5rem 1.5rem;color:#68776f}.library-empty h3{color:#263d30;margin-top:1rem}.library-empty p{line-height:1.6}.empty-symbol{font-size:1.7rem;display:inline-grid;place-items:center;border-radius:12px;background:#eff5f0;width:54px;height:54px;color:#52755d}.library-footer{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;font-size:.8rem;color:#748078;gap:1rem}.library-footer button{font-size:.8rem;margin-left:.4rem}
 @media(max-width:700px){.library-heading,.library-toolbar,.library-row,.library-footer{padding-inline:1rem}.library-heading{align-items:start}.library-heading p{max-width:28ch}.library-filters{padding-inline:1rem}.library-toolbar{flex-wrap:wrap}.library-search{flex-basis:100%}.library-search input{max-width:none}.library-columns{display:none}.library-row{grid-template-columns:1fr;gap:.7rem}.document-status{padding-left:53px}.row-action{padding-left:53px}.remove-source{margin-right:1rem}.library-footer{flex-wrap:wrap}.total{display:none}}
+.library-columns{grid-template-columns:minmax(0,1fr) 190px 170px}
+.library-item{grid-template-columns:minmax(0,1fr) 170px;align-items:stretch}
+.library-readonly .library-columns,.library-readonly .library-item{grid-template-columns:minmax(0,1fr) 190px}
+.library-row{grid-template-columns:minmax(0,1fr) 190px;gap:1rem;padding-right:1rem;min-width:0}
+.source-delete-actions{display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:.45rem;padding:.7rem 1.25rem .7rem .25rem}
+.source-delete-actions .remove-source{margin:0;white-space:normal;text-align:center;min-height:34px}
+.document-status{min-width:0}
+.status-badge{max-width:100%;overflow-wrap:anywhere}
+.row-action{line-height:1.35}
+@media(max-width:700px){
+  .library-item,.library-readonly .library-item{grid-template-columns:1fr}
+  .library-row{grid-template-columns:1fr;padding-bottom:.5rem}
+  .document-status{padding-left:53px}
+  .row-action{padding-left:0}
+  .source-delete-actions{flex-direction:row;justify-content:flex-start;flex-wrap:wrap;padding:.2rem 1rem 1rem 4.3rem}
+  .source-delete-actions .remove-source{padding:.4rem .6rem}
+  .library-toolbar>label:not(.library-search){flex:1;min-width:125px}
+  .library-toolbar select{width:100%}
+}
 </style>

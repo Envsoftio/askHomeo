@@ -99,3 +99,108 @@ func buildEvidenceFirstDraft(ctx context.Context, question, mode, pack string, h
 	}
 	return strings.Join(lines, " "), declared, omitted, nil
 }
+
+// A combined draft can confuse passages from different authors or place a
+// citation on the wrong sentence. Retry with each author's passages while
+// retaining the original evidence labels, so the ordinary citation and claim
+// checks can still decide what is safe to show.
+func recoverEvidenceFirstDraft(ctx context.Context, question, mode, original string, hits []hit, chat func(context.Context, string, string) (string, error)) (string, []string, int, error) {
+	salvaged, salvageLabels, salvageOmitted := retainSupportedSentences(original, hits)
+	groups := map[string][]int{}
+	order := []string{}
+	for i, h := range hits {
+		key := strings.TrimSpace(h.Author)
+		if key == "" {
+			key = h.Title
+		}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], i)
+	}
+	if len(groups) <= 1 && len(salvageLabels) > 0 {
+		if _, valid := validateDraft(salvaged, salvageLabels, hits); valid {
+			return salvaged, salvageLabels, salvageOmitted, nil
+		}
+	}
+	// Bound model retries in a broad library search. Named authors go first;
+	// otherwise the evidence rank determines the first three attempts.
+	prioritized := make([]string, 0, len(order))
+	for _, author := range order {
+		if authorMentionedInQuestion(question, author) {
+			prioritized = append(prioritized, author)
+		}
+	}
+	for _, author := range order {
+		if !authorMentionedInQuestion(question, author) {
+			prioritized = append(prioritized, author)
+		}
+	}
+	if len(prioritized) > 3 {
+		prioritized = prioritized[:3]
+	}
+	lines := []string{}
+	used := map[string]bool{}
+	omitted := 0
+	for _, author := range prioritized {
+		var pack strings.Builder
+		for _, i := range groups[author] {
+			h := hits[i]
+			fmt.Fprintf(&pack, "[E%d] %s by %s, scan %d\n%s\n\n", i+1, h.Title, h.Author, h.Scan, promptPassage(h))
+		}
+		answer, labels, dropped, err := buildEvidenceFirstDraft(ctx, question+" Focus on what "+author+" records in these passages.", mode, pack.String(), hits, chat)
+		if err != nil {
+			return "", nil, omitted, err
+		}
+		omitted += dropped
+		answer, labels, dropped = retainSupportedSentences(answer, hits)
+		omitted += dropped
+		if _, valid := validateDraft(answer, labels, hits); !valid {
+			continue
+		}
+		own := true
+		for _, label := range labels {
+			found := false
+			for _, i := range groups[author] {
+				if label == fmt.Sprintf("E%d", i+1) {
+					found = true
+				}
+			}
+			if !found {
+				own = false
+			}
+		}
+		if !own {
+			continue
+		}
+		lines = append(lines, answer)
+		for _, label := range labels {
+			used[label] = true
+		}
+	}
+	labels := []string{}
+	for i := range hits {
+		label := fmt.Sprintf("E%d", i+1)
+		if used[label] {
+			labels = append(labels, label)
+		}
+	}
+	answer := strings.Join(lines, " ")
+	if _, valid := validateDraft(answer, labels, hits); !valid {
+		if _, valid := validateDraft(salvaged, salvageLabels, hits); valid {
+			return salvaged, salvageLabels, omitted + salvageOmitted, nil
+		}
+		return "", nil, omitted, nil
+	}
+	return answer, labels, omitted, nil
+}
+
+func authorMentionedInQuestion(question, author string) bool {
+	question = strings.ToLower(question)
+	for _, word := range strings.FieldsFunc(strings.ToLower(author), func(r rune) bool { return r < 'a' || r > 'z' }) {
+		if len(word) >= 4 && strings.Contains(question, word) {
+			return true
+		}
+	}
+	return false
+}

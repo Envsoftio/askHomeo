@@ -71,3 +71,35 @@ func TestEvidenceFirstDraftUsesValidSupportWhenAnotherHasOCRErrors(t *testing.T)
 		t.Fatalf("answer=%q labels=%v omitted=%d err=%v", answer, labels, omitted, err)
 	}
 }
+
+func TestRecoverEvidenceFirstDraftSeparatesAuthorsAndKeepsCitationLabels(t *testing.T) {
+	hits := []hit{
+		{ID: uuid.New(), SourceID: uuid.New(), Author: "Kent", Title: "Mind", Text: "Mind, anxiety, chill, during."},
+		{ID: uuid.New(), SourceID: uuid.New(), Author: "Hahnemann", Title: "Materia Medica Pura", Text: "Anxious thoughts arise in his mind."},
+	}
+	calls := 0
+	chat := func(_ context.Context, _, user string) (string, error) {
+		calls++
+		if strings.Contains(user, "Focus on what Kent") {
+			if strings.Contains(user, "[E2]") {
+				t.Fatal("Kent retry received Hahnemann's passage")
+			}
+			return `{"claims":[{"text":"Kent lists anxiety during chill.","supports":[{"id":"E1","quote":"Mind, anxiety, chill, during"}]}]}`, nil
+		}
+		if strings.Contains(user, "Focus on what Hahnemann") {
+			if strings.Contains(user, "[E1]") {
+				t.Fatal("Hahnemann retry received Kent's passage")
+			}
+			return `{"claims":[{"text":"Hahnemann records anxious thoughts arising in the mind.","supports":[{"id":"E2","quote":"Anxious thoughts arise in his mind"}]}]}`, nil
+		}
+		t.Fatalf("unexpected retry prompt: %s", user)
+		return "", nil
+	}
+	answer, labels, _, err := recoverEvidenceFirstDraft(context.Background(), "What do Kent and Hahnemann each say about anxiety?", "quick", "Uncited mixed draft.", hits, chat)
+	if err != nil || calls != 2 || len(labels) != 2 || !strings.Contains(answer, "Kent lists anxiety") || !strings.Contains(answer, "Hahnemann records anxious thoughts") {
+		t.Fatalf("answer=%q labels=%v calls=%d err=%v", answer, labels, calls, err)
+	}
+	if _, valid := validateDraft(answer, labels, hits); !valid {
+		t.Fatal("recovered answer must satisfy ordinary citation validation")
+	}
+}

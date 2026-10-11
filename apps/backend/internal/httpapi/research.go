@@ -41,6 +41,7 @@ var structuredRepertoryQuestion = regexp.MustCompile(`(?i)\b(repertori[sz]ation|
 var questionTermPattern = regexp.MustCompile(`[\p{L}\p{N}]{3,}`)
 var quoteWordPattern = regexp.MustCompile(`[\p{L}\p{N}]+`)
 var splitOCRWordPattern = regexp.MustCompile(`-\s*\n\s*`)
+var namedSectionPattern = regexp.MustCompile(`(?i)\b([a-z][a-z-]+)'s\s+([a-z][a-z -]{1,40}?)\s+section\b`)
 
 const answerPromptRevision = "historical-evidence-first-v2"
 const claimPromptRevision = "quote-relevance-v5-heading-quote"
@@ -450,6 +451,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		}
 		return candidates[i].Score > candidates[j].Score
 	})
+	candidates = scopeNamedSections(q, candidates)
 	evidence := selectEvidence(candidates, 10)
 	retrievalDuration := time.Since(researchStarted)
 	a.logAnswerStageFromContext(r.Context(), "retrieval", map[string]any{"search_count": len(searches), "unique_candidate_count": len(candidates), "selected_candidate_count": len(evidence), "embedding_model": modelID, "embedding_config_id": configID}, &retrievalDuration)
@@ -499,8 +501,18 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	}
 	used, valid := validateDraft(draft.Answer, draft.Citations, evidence)
 	if !valid {
-		a.insufficientWithFilters(w, r.Context(), q, runID, mode, "I could not verify an answer in the prepared historical books. Check the considered passages, try another question about these sources, or consult other sources for topics outside this library.", evidence, selected, searches...)
-		return
+		var recovered int
+		draft.Answer, draft.Citations, recovered, err = recoverEvidenceFirstDraft(r.Context(), q, mode, draft.Answer, evidence, a.Model.Chat)
+		if err != nil {
+			fail(w, 503, "Source-focused answer recovery failed: "+err.Error())
+			return
+		}
+		omittedClaims += recovered
+		used, valid = validateDraft(draft.Answer, draft.Citations, evidence)
+		if !valid {
+			a.insufficientWithFilters(w, r.Context(), q, runID, mode, "I could not verify an answer in the prepared historical books. Check the considered passages, try another question about these sources, or consult other sources for topics outside this library.", evidence, selected, searches...)
+			return
+		}
 	}
 	if err = a.verifyEvidence(r.Context(), used); err != nil {
 		fail(w, 409, "The selected passages no longer match their original pages.")
@@ -524,6 +536,15 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	}
 	omittedClaims += rejectedClaims
 	draft.Answer, draft.Citations = checkedAnswer, checkedCitations
+	if questionNamesMultipleAuthors(q, evidence) && len(draft.Citations) > 0 {
+		var recovered int
+		draft.Answer, draft.Citations, recovered, err = supplementUnrepresentedSources(checkCtx, q, draft.Answer, draft.Citations, evidence, a.Model.Chat)
+		if err != nil {
+			fail(w, 503, "Source comparison recovery failed: "+err.Error())
+			return
+		}
+		omittedClaims += recovered
+	}
 	used, valid = validateDraft(draft.Answer, draft.Citations, evidence)
 	if !valid {
 		reason := "I could not verify the draft claims against the source pages. Check the claim checks and considered passages or try a different question about these sources."
@@ -642,6 +663,56 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, map[string]any{"answer_id": answerID, "status": answerStatus, "answer": draft.Answer, "citations": cites, "searches": searches, "source_ids": selected, "research_mode": mode, "omitted_claim_count": omittedClaims, "evidence": evidenceCards(evidence, used), "sections": sections})
+}
+
+func questionNamesMultipleAuthors(question string, hits []hit) bool {
+	matched := map[string]bool{}
+	for _, h := range hits {
+		if authorMentionedInQuestion(question, h.Author) {
+			matched[strings.ToLower(h.Author)] = true
+		}
+	}
+	return len(matched) >= 2
+}
+
+// When a question names an author's section, other sections by that author
+// cannot support a claim attributed to the named section. Keep other authors
+// available for comparisons.
+func scopeNamedSections(question string, candidates []hit) []hit {
+	matches := namedSectionPattern.FindAllStringSubmatch(question, -1)
+	if len(matches) == 0 {
+		return candidates
+	}
+	allowed := make([]bool, len(candidates))
+	for i := range allowed {
+		allowed[i] = true
+	}
+	for _, match := range matches {
+		author := strings.ToLower(match[1])
+		section := strings.ToLower(strings.TrimSpace(match[2]))
+		found := false
+		for _, h := range candidates {
+			if strings.Contains(strings.ToLower(h.Author), author) && strings.EqualFold(strings.TrimSpace(h.Title[strings.LastIndex(h.Title, ":")+1:]), section) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		for i, h := range candidates {
+			if strings.Contains(strings.ToLower(h.Author), author) && !strings.EqualFold(strings.TrimSpace(h.Title[strings.LastIndex(h.Title, ":")+1:]), section) {
+				allowed[i] = false
+			}
+		}
+	}
+	filtered := make([]hit, 0, len(candidates))
+	for i, h := range candidates {
+		if allowed[i] {
+			filtered = append(filtered, h)
+		}
+	}
+	return filtered
 }
 
 func selectEvidence(candidates []hit, limit int) []hit {
@@ -1122,29 +1193,29 @@ func recoverPassageQuote(passage, quote string) (string, bool) {
 	return string([]rune(passage)[start:end]), true
 }
 
-// Give a source omitted by the first draft a focused chance to contribute.
+// Give an author omitted by the first draft a focused chance to contribute.
 // Added claims pass the same structural, passage and relevance checks.
 func supplementUnrepresentedSources(ctx context.Context, question, answer string, cites []string, hits []hit, chat func(context.Context, string, string) (string, error)) (string, []string, int, error) {
 	used := map[string]bool{}
 	for _, label := range cites {
 		used[label] = true
 	}
-	represented := map[uuid.UUID]bool{}
+	represented := map[string]bool{}
 	for i, h := range hits {
 		if used[fmt.Sprintf("E%d", i+1)] {
-			represented[h.SourceID] = true
+			represented[h.Author] = true
 		}
 	}
 	omitted := 0
-	visited := map[uuid.UUID]bool{}
+	visited := map[string]bool{}
 	for _, source := range hits {
-		if visited[source.SourceID] || represented[source.SourceID] {
+		if visited[source.Author] || represented[source.Author] {
 			continue
 		}
-		visited[source.SourceID] = true
+		visited[source.Author] = true
 		var pack strings.Builder
 		for i, h := range hits {
-			if h.SourceID == source.SourceID {
+			if h.Author == source.Author {
 				fmt.Fprintf(&pack, "[E%d] %s by %s\n%s\n\n", i+1, h.Title, h.Author, promptPassage(h))
 			}
 		}
@@ -1182,7 +1253,7 @@ func supplementUnrepresentedSources(ctx context.Context, question, answer string
 		ownSource := true
 		for _, label := range labels {
 			for i, h := range hits {
-				if label == fmt.Sprintf("E%d", i+1) && h.SourceID != source.SourceID {
+				if label == fmt.Sprintf("E%d", i+1) && h.Author != source.Author {
 					ownSource = false
 				}
 			}

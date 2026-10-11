@@ -77,6 +77,31 @@ func TestSelectEvidenceBalancesAuthors(t *testing.T) {
 	}
 }
 
+func TestScopeNamedSectionsKeepsOnlyRequestedAuthorSection(t *testing.T) {
+	hits := []hit{
+		{Title: "Kent repertory : MIND", Author: "Kent J.T."},
+		{Title: "KENT0430", Author: "Kent J.T."},
+		{Title: "MATERIA MEDICA PURA", Author: "SAMUEL HAHNEMANN"},
+	}
+	filtered := scopeNamedSections("What do Kent's Mind section and Hahnemann's Materia Medica Pura each say about anxiety?", hits)
+	if len(filtered) != 2 || filtered[0].Title != "Kent repertory : MIND" || filtered[1].Title != "MATERIA MEDICA PURA" {
+		t.Fatalf("named section scope = %+v", filtered)
+	}
+	if got := scopeNamedSections("What do Kent and Hahnemann say about anxiety?", hits); len(got) != len(hits) {
+		t.Fatalf("unnamed section scope removed passages: %+v", got)
+	}
+}
+
+func TestQuestionNamesMultipleAuthors(t *testing.T) {
+	hits := []hit{{Author: "Kent J.T."}, {Author: "SAMUEL HAHNEMANN"}}
+	if !questionNamesMultipleAuthors("What do Kent and Hahnemann each say about anxiety?", hits) {
+		t.Fatal("comparison authors were not recognized")
+	}
+	if questionNamesMultipleAuthors("What does Kent say about anxiety?", hits) {
+		t.Fatal("single-author question was treated as a comparison")
+	}
+}
+
 func TestSupplementUnrepresentedSourceAddsVerifiedClaim(t *testing.T) {
 	nash, farrington := uuid.New(), uuid.New()
 	hits := []hit{
@@ -94,6 +119,28 @@ func TestSupplementUnrepresentedSourceAddsVerifiedClaim(t *testing.T) {
 	})
 	if err != nil || omitted != 0 || len(cites) != 2 || !strings.Contains(answer, "Nash links Aconite") {
 		t.Fatalf("supplement answer=%q cites=%v omitted=%d err=%v", answer, cites, omitted, err)
+	}
+}
+
+func TestSupplementUnrepresentedAuthorGroupsPageSources(t *testing.T) {
+	hits := []hit{
+		{ID: uuid.New(), SourceID: uuid.New(), Author: "Kent", Text: "Mind, anxiety, evening, bed, in."},
+		{ID: uuid.New(), SourceID: uuid.New(), Author: "Kent", Text: "Mind, anxiety, chill, during."},
+		{ID: uuid.New(), SourceID: uuid.New(), Author: "Hahnemann", Text: "Anxious thoughts arise in his mind."},
+	}
+	calls := 0
+	_, _, _, err := supplementUnrepresentedSources(context.Background(), "What do Kent and Hahnemann say about anxiety?", "Hahnemann records anxious thoughts [E3].", []string{"E3"}, hits, func(_ context.Context, system, user string) (string, error) {
+		if strings.Contains(system, "Add two or three") {
+			calls++
+			if !strings.Contains(user, "[E1]") || !strings.Contains(user, "[E2]") {
+				t.Fatal("Kent's page sources were not grouped")
+			}
+			return `{"answer":"","citations":[]}`, nil
+		}
+		return "", nil
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("supplement calls=%d err=%v", calls, err)
 	}
 }
 
