@@ -1934,9 +1934,9 @@ onUnmounted(()=>{
               <div class="step">
                 <h3>1. Check the pages</h3>
                 <p>
-                  Clear blank scans are omitted from answers. The system compares stored
-                  text with a 300 DPI OCR pass and checks word confidence; uncertain words and failed checks stay in your
-                  review list. Every original scan remains in the PDF.
+                  Clear blank scans are omitted from answers. Embedded PDF text is used when available;
+                  scanned pages get a 300 DPI OCR pass with an automatic higher-resolution retry when needed.
+                  Only uncertain results need review. The original scan remains in the PDF.
                 </p>
                 <p
                   v-if="
@@ -2075,7 +2075,7 @@ onUnmounted(()=>{
                 </div>
                 <div v-if="session.role === 'admin'" class="step">
                   <h4>Repair this scan’s text</h4>
-                  <button :disabled="busy" @click="retryPageOCR">{{ busy ? 'Working…' : 'Retry OCR at 300 DPI' }}</button>
+                  <button :disabled="busy" @click="retryPageOCR">{{ busy ? 'Working…' : 'Rescan at 400 DPI' }}</button>
                   <p>Retry creates a draft below. Compare it with the original scan and correct any words or missing lines before saving.</p>
                   <p v-if="ocrWarning">{{ ocrWarning }}</p>
                   <label class="note-label">Corrected text

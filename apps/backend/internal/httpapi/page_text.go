@@ -36,7 +36,7 @@ func (a *API) retryPageOCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	text, warning, err := pdfocr.Check(r.Context(), pdf, index)
+	text, warning, err := pdfocr.Rescan(r.Context(), pdf, index)
 	if err != nil {
 		fail(w, 422, "OCR could not read this scan. Try again or enter the text manually.")
 		return

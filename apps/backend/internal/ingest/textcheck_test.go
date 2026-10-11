@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"homeopath-poc/backend/internal/pdfocr"
 )
 
 func TestComparePageTextFindsMissingOpening(t *testing.T) {
@@ -80,5 +82,34 @@ func TestComparePageTextAllowsTableReadingOrder(t *testing.T) {
 	ocr := "Finding Observation Result Notes Followup Remedy Dose " + rows
 	if got := comparePageText(stored, ocr); got.suspect {
 		t.Fatalf("table column order flagged: %+v", got)
+	}
+}
+
+func TestResolveOCRWarningForEmbeddedText(t *testing.T) {
+	stored := strings.Repeat("remedy symptoms improved after treatment ", 30)
+	match := textCheck{coverage: 0.98}
+	if got := resolveOCRWarning(match, pdfocr.ConfidenceWarning, "PDF text", stored, stored); got.suspect {
+		t.Fatalf("high agreement PDF text flagged: %+v", got)
+	}
+	noisyOCR := strings.ReplaceAll(stored, "improved", "impr0ved")
+	if got := resolveOCRWarning(comparePageText(stored, noisyOCR), pdfocr.ConfidenceWarning, "PDF text", stored, noisyOCR); got.suspect {
+		t.Fatalf("isolated OCR errors flagged despite continuous embedded text: %+v", got)
+	}
+	for _, tc := range []struct {
+		result  textCheck
+		method  string
+		warning string
+		stored  string
+		fresh   string
+	}{
+		{match, "Tesseract OCR", pdfocr.ConfidenceWarning, stored, stored},
+		{textCheck{coverage: 0.70}, "PDF text", pdfocr.ConfidenceWarning, stored, stored},
+		{match, "PDF text", "OCR required a cropped scan; check all margins for missing text.", stored, stored},
+		{match, "PDF text", pdfocr.ConfidenceWarning, "short page", "short page"},
+		{match, "PDF text", pdfocr.ConfidenceWarning, stored, "uniquephrase1 uniquephrase2 uniquephrase3 uniquephrase4 uniquephrase5 " + stored},
+	} {
+		if got := resolveOCRWarning(tc.result, tc.warning, tc.method, tc.stored, tc.fresh); !got.suspect {
+			t.Fatalf("uncertain page auto-passed: %+v", tc)
+		}
 	}
 }

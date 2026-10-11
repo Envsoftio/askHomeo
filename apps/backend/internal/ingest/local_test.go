@@ -24,12 +24,12 @@ func TestExtractLocalPDFPage(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("make PDF: %v: %s", err, out)
 	}
-	text, method, err := extractLocalPage(context.Background(), pdf, 0)
+	text, method, warning, err := extractLocalPage(context.Background(), pdf, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if method != "PDF text" || !strings.Contains(text, "Aconite") || !strings.Contains(text, "fever") {
-		t.Fatalf("unexpected extraction %q: %q", method, text)
+	if method != "PDF text" || warning != "" || !strings.Contains(text, "Aconite") || !strings.Contains(text, "fever") {
+		t.Fatalf("unexpected extraction %q (%s): %q", method, warning, text)
 	}
 }
 func TestGuessPrintedLabelOnlyAtPageEdges(t *testing.T) {
@@ -41,5 +41,18 @@ func TestGuessPrintedLabelOnlyAtPageEdges(t *testing.T) {
 	}
 	if got := guessPrintedLabel("Heading\nBody text\n42"); got == nil || *got != "42" {
 		t.Fatalf("footer number: %v", got)
+	}
+}
+
+func TestInitialOCRQuality(t *testing.T) {
+	text := strings.Repeat("The remedy symptoms improved after treatment. ", 12)
+	if status, review, _ := initialOCRQuality(text, ""); status != "passed" || review != "auto_checked" {
+		t.Fatalf("clear initial OCR was not accepted: %s/%s", status, review)
+	}
+	if status, _, _ := initialOCRQuality(text, "uncertain words"); status != "suspect" {
+		t.Fatal("uncertain OCR was accepted")
+	}
+	if status, _, _ := initialOCRQuality("one short line", ""); status != "suspect" {
+		t.Fatal("incomplete OCR was accepted")
 	}
 }

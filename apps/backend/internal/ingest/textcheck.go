@@ -69,6 +69,55 @@ func freshOCR(ctx context.Context, pdf string, index int) (string, error) {
 	return pdfocr.Read(ctx, pdf, index)
 }
 
+func independentDigitalTextAgreement(result textCheck, stored, fresh string) bool {
+	if pdfocr.SuspiciousText(stored) != "" || result.coverage < 0.80 {
+		return false
+	}
+	oldWords := qaWords.FindAllString(strings.ToLower(stored), -1)
+	newWords := qaWords.FindAllString(strings.ToLower(fresh), -1)
+	if len(oldWords) < 80 || len(newWords) < 80 || float64(len(oldWords))/float64(len(newWords)) < 0.9 || float64(len(oldWords))/float64(len(newWords)) > 1.2 {
+		return false
+	}
+	known := make(map[string]bool, len(oldWords))
+	for _, word := range oldWords {
+		known[word] = true
+	}
+	missingRun, first, last := 0, 0, 0
+	for i, word := range newWords {
+		if known[word] {
+			missingRun = 0
+			if i < 12 {
+				first++
+			}
+			if i >= len(newWords)-12 {
+				last++
+			}
+		} else if len([]rune(word)) >= 3 {
+			missingRun++
+			if missingRun >= 5 {
+				return false
+			}
+		}
+	}
+	return first >= 4 && last >= 4
+}
+
+func resolveOCRWarning(result textCheck, warning, method, stored, fresh string) textCheck {
+	if warning == "" {
+		return result
+	}
+	// Historical names and citations can have weak OCR confidence even when the
+	// embedded text agrees throughout the page. Long consecutive OCR-only runs
+	// still indicate a possible missing line and require review.
+	if warning == pdfocr.ConfidenceWarning && method == "PDF text" && independentDigitalTextAgreement(result, stored, fresh) {
+		return textCheck{false, fmt.Sprintf("Embedded PDF text and scan OCR agree across the page (%.0f%% exact words); OCR uncertainty is isolated.", result.coverage*100), result.coverage}
+	}
+	if result.suspect {
+		return result
+	}
+	return textCheck{true, warning, result.coverage}
+}
+
 func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error {
 	var sha string
 	if err := w.Store.DB.QueryRow(ctx, `SELECT pdf_sha256 FROM sources WHERE id=$1 AND status='review'`, sourceID).Scan(&sha); err != nil {
@@ -79,19 +128,20 @@ func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error
 		return storageErr
 	}
 	defer releasePDF()
-	rows, err := w.Store.DB.Query(ctx, `SELECT id,pdf_page_index,text_raw FROM pages WHERE source_id=$1 AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NULL ORDER BY scan_page_index`, sourceID)
+	rows, err := w.Store.DB.Query(ctx, `SELECT id,pdf_page_index,text_raw,extraction_method FROM pages WHERE source_id=$1 AND scan_page_index>=0 AND page_kind='text' AND text_qa_at IS NULL ORDER BY scan_page_index`, sourceID)
 	if err != nil {
 		return fmt.Errorf("list text pages: %w", err)
 	}
 	type page struct {
-		id    uuid.UUID
-		index int
-		text  string
+		id     uuid.UUID
+		index  int
+		text   string
+		method string
 	}
 	var pages []page
 	for rows.Next() {
 		var p page
-		if err = rows.Scan(&p.id, &p.index, &p.text); err != nil {
+		if err = rows.Scan(&p.id, &p.index, &p.text, &p.method); err != nil {
 			rows.Close()
 			return err
 		}
@@ -110,8 +160,8 @@ func (w *Worker) checkText(ctx context.Context, jobID, sourceID uuid.UUID) error
 		result := comparePageText(p.text, fresh)
 		if err != nil {
 			result = textCheck{true, "OCR could not verify this scan. Retry OCR or correct the text against the image.", 0}
-		} else if warning != "" {
-			result = textCheck{true, warning, 0}
+		} else {
+			result = resolveOCRWarning(result, warning, p.method, p.text, fresh)
 		}
 		_, err = w.Store.DB.Exec(ctx, `UPDATE pages SET text_qa_at=now(),text_qa_reason=$2,
  text_qa_status=CASE WHEN $3 THEN 'suspect' ELSE 'passed' END,

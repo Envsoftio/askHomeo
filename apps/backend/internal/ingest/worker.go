@@ -286,7 +286,7 @@ func (w *Worker) recordRevisionTools(ctx context.Context, sourceID uuid.UUID) er
 		}
 		cancel()
 	}
-	config := map[string]any{"text_extraction": textExtraction, "ocr": "tesseract eng psm3", "qa_render_dpi": pdfocr.RenderDPI, "blank_render_dpi": 40, "chunking": passage.Version}
+	config := map[string]any{"text_extraction": textExtraction, "ocr": "tesseract eng psm3 with adaptive grayscale retry", "qa_render_dpi": pdfocr.RenderDPI, "ocr_retry_dpi": pdfocr.RetryDPI, "blank_render_dpi": 40, "chunking": passage.Version}
 	configBytes, _ := json.Marshal(config)
 	configHash := sha256.Sum256(configBytes)
 	config["processing_config_sha256"] = hex.EncodeToString(configHash[:])
@@ -303,8 +303,8 @@ func (w *Worker) finishIngest(ctx context.Context, jobID, sourceID uuid.UUID) er
 	if err != nil {
 		return fmt.Errorf("enqueue scan triage: %w", err)
 	}
-	_, err = w.Store.DB.Exec(ctx, `INSERT INTO jobs(id,source_id,kind,status,current_step,total)
- SELECT $1,$2,'text_qa','queued','Checking text against scans',count(*)::int FROM pages
+	_, err = w.Store.DB.Exec(ctx, `INSERT INTO jobs(id,source_id,kind,status,current_step,completed,total)
+ SELECT $1,$2,'text_qa','queued','Checking text against scans',count(*) FILTER (WHERE text_qa_at IS NOT NULL)::int,count(*)::int FROM pages
  WHERE source_id=$2 AND scan_page_index>=0 AND page_kind='text' HAVING count(*)>0
  ON CONFLICT(source_id,kind) DO NOTHING`, uuid.New(), sourceID)
 	if err != nil {
@@ -343,21 +343,27 @@ func (w *Worker) processLocal(ctx context.Context, jobID, sourceID uuid.UUID) er
 		if exists {
 			continue
 		}
-		raw, method, err := extractLocalPage(ctx, path, i)
+		raw, method, warning, err := extractLocalPage(ctx, path, i)
 		if err != nil {
 			return fmt.Errorf("PDF page %d: %w", i+1, err)
 		}
 		p := core.MappedPage{PDFPageIndex: i, ScanPageIndex: i, CanvasID: fmt.Sprintf("local-%d", i), ImageURL: fmt.Sprintf("/api/v1/sources/%s/pages/%d/image", sourceID, i)}
 		p.PrintedLabel = guessPrintedLabel(raw)
-		if err := w.savePage(ctx, jobID, sourceID, p, raw); err != nil {
-			return err
-		}
-		_, err = w.Store.DB.Exec(ctx, `UPDATE pages SET extraction_method=$3 WHERE source_id=$1 AND pdf_page_index=$2`, sourceID, i, method)
-		if err != nil {
+		if err := w.saveLocalPage(ctx, jobID, sourceID, p, raw, method, warning); err != nil {
 			return err
 		}
 	}
 	return w.finishIngest(ctx, jobID, sourceID)
+}
+
+func initialOCRQuality(raw, warning string) (status, review, reason string) {
+	if warning != "" {
+		return "suspect", "needs_review", warning
+	}
+	if len(qaWords.FindAllString(raw, -1)) < 40 {
+		return "suspect", "needs_review", "OCR found too little text to verify the complete scan."
+	}
+	return "passed", "auto_checked", "Initial OCR found readable text with sufficient word confidence."
 }
 
 var printedPagePattern = regexp.MustCompile(`(?i)^(?:[0-9]{1,4}|[ivxlcdm]{1,12})$`)
@@ -375,10 +381,10 @@ func guessPrintedLabel(raw string) *string {
 	}
 	return nil
 }
-func extractLocalPage(ctx context.Context, pdf string, index int) (string, string, error) {
+func extractLocalPage(ctx context.Context, pdf string, index int) (string, string, string, error) {
 	dir, err := os.MkdirTemp("", "pdf-extract-*")
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	defer os.RemoveAll(dir)
 	output := filepath.Join(dir, "page.txt")
@@ -389,36 +395,36 @@ func extractLocalPage(ctx context.Context, pdf string, index int) (string, strin
 	if _, err := exec.LookPath("pdftotext"); err == nil {
 		cmd := exec.CommandContext(step, "pdftotext", "-f", page, "-l", page, "-layout", "-enc", "UTF-8", pdf, output)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
+			return "", "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	} else {
 		cmd := exec.CommandContext(step, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=txtwrite", "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+output, "-f", pdf)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
+			return "", "", "", fmt.Errorf("extract PDF text: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
 	b, err := os.ReadFile(output)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if len(b) > 1<<20 {
-		return "", "", errors.New("page text is too large")
+		return "", "", "", errors.New("page text is too large")
 	}
 	raw := strings.TrimSpace(string(b))
 	if len([]rune(raw)) >= 40 && pdfocr.SuspiciousText(raw) == "" {
-		return raw, method, nil
+		return raw, method, "", nil
 	}
-	ocr, err := freshOCR(ctx, pdf, index)
+	ocr, warning, err := pdfocr.Extract(ctx, pdf, index)
 	if err != nil {
 		if raw != "" {
-			return raw, method, nil
+			return raw, method, "", nil
 		}
-		return "", "", err
+		return "", "", "", err
 	}
 	if len([]rune(strings.TrimSpace(ocr))) > len([]rune(raw)) || (pdfocr.SuspiciousText(raw) != "" && strings.TrimSpace(ocr) != "") {
-		return strings.TrimSpace(ocr), "Tesseract OCR", nil
+		return strings.TrimSpace(ocr), "Tesseract OCR", warning, nil
 	}
-	return raw, method, nil
+	return raw, method, "", nil
 }
 func (w *Worker) fetch(ctx context.Context, address string) (string, error) {
 	u, err := url.Parse(address)
@@ -484,6 +490,19 @@ func ParseALTO(b []byte) (string, error) {
 	return strings.TrimSpace(out.String()), nil
 }
 func (w *Worker) savePage(ctx context.Context, jobID, sourceID uuid.UUID, p core.MappedPage, raw string) error {
+	return w.savePageWithQuality(ctx, jobID, sourceID, p, raw, "Wellcome ALTO", "pending", "needs_review", "", false)
+}
+
+func (w *Worker) saveLocalPage(ctx context.Context, jobID, sourceID uuid.UUID, p core.MappedPage, raw, method, warning string) error {
+	status, review, reason, checked := "pending", "needs_review", "", false
+	if method == "Tesseract OCR" && strings.TrimSpace(raw) != "" {
+		status, review, reason = initialOCRQuality(raw, warning)
+		checked = true
+	}
+	return w.savePageWithQuality(ctx, jobID, sourceID, p, raw, method, status, review, reason, checked)
+}
+
+func (w *Worker) savePageWithQuality(ctx context.Context, jobID, sourceID uuid.UUID, p core.MappedPage, raw, method, qaStatus, reviewStatus, qaReason string, checked bool) error {
 	tx, err := w.Store.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -491,8 +510,8 @@ func (w *Worker) savePage(ctx context.Context, jobID, sourceID uuid.UUID, p core
 	defer tx.Rollback(ctx)
 	pageID := uuid.New()
 	digest := sha256.Sum256([]byte(raw))
-	_, err = tx.Exec(ctx, `INSERT INTO pages(id,source_id,pdf_page_index,scan_page_index,printed_label,canvas_id,alto_url,image_url,text_raw,text_sha256,extraction_method)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Wellcome ALTO') ON CONFLICT(source_id,pdf_page_index) DO NOTHING`, pageID, sourceID, p.PDFPageIndex, p.ScanPageIndex, p.PrintedLabel, p.CanvasID, p.ALTOURL, p.ImageURL, raw, hex.EncodeToString(digest[:]))
+	_, err = tx.Exec(ctx, `INSERT INTO pages(id,source_id,pdf_page_index,scan_page_index,printed_label,canvas_id,alto_url,image_url,text_raw,text_sha256,extraction_method,text_qa_status,review_status,text_qa_reason,text_qa_at)
+ VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,CASE WHEN $15 THEN now() ELSE NULL END) ON CONFLICT(source_id,pdf_page_index) DO NOTHING`, pageID, sourceID, p.PDFPageIndex, p.ScanPageIndex, p.PrintedLabel, p.CanvasID, p.ALTOURL, p.ImageURL, raw, hex.EncodeToString(digest[:]), method, qaStatus, reviewStatus, qaReason, checked)
 	if err != nil {
 		return err
 	}

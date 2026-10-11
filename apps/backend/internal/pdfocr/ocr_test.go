@@ -40,6 +40,16 @@ func TestWordConfidence(t *testing.T) {
 	}
 }
 
+func TestPreferRetryRequiresCompleteCleanText(t *testing.T) {
+	baseline := strings.Repeat("Remedy symptoms improved after treatment. ", 20)
+	if !preferRetry(baseline, baseline, "") {
+		t.Fatal("clean complete retry was rejected")
+	}
+	if preferRetry(baseline, "Remedy symptoms improved.", "") || preferRetry(baseline, baseline, ConfidenceWarning) || preferRetry(baseline, baseline+" w(U'k", "") {
+		t.Fatal("uncertain or incomplete retry was accepted")
+	}
+}
+
 func TestCheckRenderedPage(t *testing.T) {
 	for _, tool := range []string{"gs", "tesseract"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -68,5 +78,9 @@ func TestCheckRenderedPage(t *testing.T) {
 	}
 	if strings.Contains(warning, "unavailable") {
 		t.Fatalf("TSV confidence missing: %s", warning)
+	}
+	retry, _, err := Rescan(context.Background(), pdf, 0)
+	if err != nil || !strings.Contains(retry, "Materia Medica") {
+		t.Fatalf("400 DPI rescan failed: %v %q", err, retry)
 	}
 }

@@ -18,6 +18,9 @@ import (
 
 // RenderDPI is shared by page OCR and bibliographic metadata OCR.
 const RenderDPI = 300
+const RetryDPI = 400
+
+const ConfidenceWarning = "OCR found uncertain words. Compare the scan and correct or confirm the text."
 
 var qaWords = regexp.MustCompile(`[a-z]{4,}`)
 
@@ -26,6 +29,38 @@ func Read(ctx context.Context, pdf string, index int) (string, error) {
 	return text, err
 }
 func Check(ctx context.Context, pdf string, pdfPageIndex int) (string, string, error) {
+	return checkAt(ctx, pdf, pdfPageIndex, RenderDPI, "png16m")
+}
+
+// Extract retries uncertain first-pass OCR at higher resolution, accepting the
+// second pass only when it is clear and retains nearly all detected content.
+func Extract(ctx context.Context, pdf string, pdfPageIndex int) (string, string, error) {
+	text, warning, err := Check(ctx, pdf, pdfPageIndex)
+	if err != nil || warning == "" || ctx.Err() != nil {
+		return text, warning, err
+	}
+	better, betterWarning, retryErr := Rescan(ctx, pdf, pdfPageIndex)
+	if retryErr == nil && preferRetry(text, better, betterWarning) {
+		return better, "", nil
+	}
+	return text, warning, nil
+}
+
+func preferRetry(original, retry, warning string) bool {
+	if warning != "" || SuspiciousText(retry) != "" {
+		return false
+	}
+	oldWords := len(qaWords.FindAllString(strings.ToLower(original), -1))
+	newWords := len(qaWords.FindAllString(strings.ToLower(retry), -1))
+	return newWords >= 8 && newWords*10 >= oldWords*9
+}
+
+// Rescan gives an administrator a separate, higher-resolution OCR draft.
+func Rescan(ctx context.Context, pdf string, pdfPageIndex int) (string, string, error) {
+	return checkAt(ctx, pdf, pdfPageIndex, RetryDPI, "pnggray")
+}
+
+func checkAt(ctx context.Context, pdf string, pdfPageIndex, dpi int, device string) (string, string, error) {
 	if pdfPageIndex < 0 {
 		return "", "", fmt.Errorf("invalid PDF page %d", pdfPageIndex)
 	}
@@ -36,9 +71,9 @@ func Check(ctx context.Context, pdf string, pdfPageIndex int) (string, string, e
 	defer os.RemoveAll(dir)
 	image := filepath.Join(dir, "scan.png")
 	page := strconv.Itoa(pdfPageIndex + 1)
-	renderCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	renderCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(renderCtx, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=png16m", "-r"+strconv.Itoa(RenderDPI), "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+image, "-f", pdf)
+	cmd := exec.CommandContext(renderCtx, "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE="+device, "-r"+strconv.Itoa(dpi), "-dFirstPage="+page, "-dLastPage="+page, "-sOutputFile="+image, "-f", pdf)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("render PDF page %s: %w: %s", page, err, bytes.TrimSpace(out))
 	}
@@ -49,7 +84,7 @@ func Check(ctx context.Context, pdf string, pdfPageIndex int) (string, string, e
 	if info.Size() > 32<<20 {
 		return "", "", fmt.Errorf("rendered scan %s is too large", page)
 	}
-	ocrCtx, stop := context.WithTimeout(ctx, 25*time.Second)
+	ocrCtx, stop := context.WithTimeout(ctx, 45*time.Second)
 	defer stop()
 	wordsFile := filepath.Join(dir, "domain-words.txt")
 	if err := os.WriteFile(wordsFile, []byte("Materia\nMedica\n"), 0600); err != nil {
@@ -86,7 +121,7 @@ func Check(ctx context.Context, pdf string, pdfPageIndex int) (string, string, e
 	if tsvErr != nil {
 		warning = "Word confidence is unavailable; compare this scan with the text."
 	} else if lowConfidence(string(tsv)) {
-		warning = "OCR found uncertain words. Compare the scan and correct or confirm the text."
+		warning = ConfidenceWarning
 	}
 	if croppedUsed {
 		warning = "OCR required a cropped scan; check all margins for missing text."
