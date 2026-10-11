@@ -27,6 +27,11 @@ const doiNotice=ref(''),lastDOIID=ref('')
 const archiveQuery=ref(''),archiveResults=ref<ArchiveWork[]>([]),archiveItem=ref<ArchiveItem|null>(null),archivePage=ref(1),archiveTotal=ref(0),archiveNotice=ref('')
 const pages=ref<Page[]>([]),pageOffset=ref(0),scanNumber=ref(1),selectedPage=ref<Page|null>(null)
 const documentFile=ref<File|null>(null),documentCharset=ref(''),intakeLiteratureCategory=ref(''),documentBlocks=ref<DocumentBlock[]>([]),blockTexts=ref<Record<string,string>>({}),blockNotes=ref<Record<string,string>>({})
+type DocumentTextReview={revision_id:string,review_hash:string,plain_text:string,blocks:number,pending_blocks:number}
+const documentTextReview=ref<DocumentTextReview|null>(null),documentReviewText=ref(''),documentReviewBusy=ref(false),documentReviewNotice=ref('')
+const showIndividualBlocks=ref(false),showExcludedBlocks=ref(false)
+const visibleDocumentBlocks=computed(()=>showIndividualBlocks.value?documentBlocks.value.filter(block=>showExcludedBlocks.value||block.review_status!=='excluded'):[])
+const documentReviewChanged=computed(()=>!!documentTextReview.value&&documentReviewText.value!==documentTextReview.value.plain_text)
 const literatureOptions=['materia_medica','repertory','organon_philosophy','therapeutics','provings','clinical_cases','research','other','unclassified']
 const evidenceOptions=['unknown','classical_reference','published_case','trial_study','systematic_review','trial_registration','guideline_safety','other']
 const selectedLiteratureCategories=ref<string[]>([]),reviewLiteratureCategories=ref<string[]>(['unclassified']),reviewEvidenceCategory=ref('unknown'),categoryReason=ref(''),sectionCategories=ref<Record<string,string[]>>({}),sectionCategoryReasons=ref<Record<string,string>>({})
@@ -484,8 +489,25 @@ function uploadDocument(){if(!documentFile.value)return;run(async()=>{
  const result=await api<{source_id:string,title:string}>('/sources/upload-document',{method:'POST',body:form})
  documentFile.value=null;uploadTitle.value='';uploadAuthor.value='';uploadEdition.value='';uploadPublication.value='';uploadRepository.value='';uploadURL.value='';uploadRights.value='';intakeLiteratureCategory.value='';await importedSource(result)
 })}
-async function loadDocumentBlocks(){if(!active.value)return;try{documentBlocks.value=await api<DocumentBlock[]>(`/sources/${active.value.id}/blocks`);blockTexts.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,b.reviewed_text]));sectionCategories.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,[...b.literature_categories]]));connectionError.value=''}catch(e){connectionError.value=e instanceof Error?e.message:'Could not load document blocks.'}}
-function reviewDocumentBlock(block:DocumentBlock,decision:'accepted'|'corrected'|'excluded'){run(async()=>{await api(`/document-blocks/${block.id}/review`,{method:'POST',body:JSON.stringify({decision,text:blockTexts.value[block.id],note:blockNotes.value[block.id]||''})});await loadDocumentBlocks()})}
+async function loadDocumentBlocks(){if(!active.value)return;try{documentBlocks.value=await api<DocumentBlock[]>(`/sources/${active.value.id}/blocks`);blockTexts.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,b.review_status==='excluded'?'':b.reviewed_text]));sectionCategories.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,[...b.literature_categories]]));connectionError.value=''}catch(e){connectionError.value=e instanceof Error?e.message:'Could not load document blocks.'}}
+async function openDocumentTextReview(){
+ if(!active.value)return
+ documentReviewBusy.value=true;documentReviewNotice.value=''
+ try{const review=await api<DocumentTextReview>(`/sources/${active.value.id}/review-text`);documentTextReview.value=review;documentReviewText.value=review.plain_text;await nextTick();document.querySelector<HTMLTextAreaElement>('.document-review-editor')?.focus()}
+ catch(e){documentReviewNotice.value=e instanceof Error?e.message:'Could not open document text review.'}
+ finally{documentReviewBusy.value=false}
+}
+async function saveDocumentTextReview(){
+ if(!active.value||!documentTextReview.value)return
+ documentReviewBusy.value=true;documentReviewNotice.value=''
+ try{
+  const result=await api<{retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>(`/sources/${active.value.id}/review-text`,{method:'PUT',body:JSON.stringify({revision_id:documentTextReview.value.revision_id,review_hash:documentTextReview.value.review_hash,plain_text:documentReviewText.value})})
+  await loadDocumentBlocks();await refresh();await openDocumentTextReview()
+  documentReviewNotice.value=`Saved: ${result.retained_blocks} retained, ${result.excluded_blocks} excluded, ${result.trimmed_blocks} trimmed. Review rights before publishing.`
+ }catch(e){documentReviewNotice.value=e instanceof Error?e.message:'Could not save document text review.'}
+ finally{documentReviewBusy.value=false}
+}
+function reviewDocumentBlock(block:DocumentBlock,decision:'accepted'|'corrected'|'excluded'){run(async()=>{await api(`/document-blocks/${block.id}/review`,{method:'POST',body:JSON.stringify({decision,text:blockTexts.value[block.id],note:blockNotes.value[block.id]||''})});await loadDocumentBlocks();documentTextReview.value=null;documentReviewNotice.value='Block review saved. Reopen the document editor to see the current retained text.'})}
 function toggleReviewCategory(value:string){if(value==='unclassified'){reviewLiteratureCategories.value=['unclassified'];return}const current=new Set(reviewLiteratureCategories.value.filter(v=>v!=='unclassified'));if(current.has(value))current.delete(value);else current.add(value);reviewLiteratureCategories.value=current.size?[...current]:['unclassified']}
 function toggleAskCategory(value:string){if(value==='unclassified'){selectedLiteratureCategories.value=selectedLiteratureCategories.value.includes('unclassified')?[]:['unclassified'];return}const current=new Set(selectedLiteratureCategories.value.filter(v=>v!=='unclassified'));if(current.has(value))current.delete(value);else current.add(value);selectedLiteratureCategories.value=[...current]}
 function toggleSectionCategory(id:string,value:string){if(value==='unclassified'){sectionCategories.value[id]=['unclassified'];return}const current=new Set((sectionCategories.value[id]||['unclassified']).filter(v=>v!=='unclassified'));if(current.has(value))current.delete(value);else current.add(value);sectionCategories.value[id]=current.size?[...current]:['unclassified']}
@@ -493,7 +515,7 @@ function saveLiteratureCategories(origin:'accepted_suggestion'|'manual'){if(!act
 function retryClassification(){if(!active.value)return;run(async()=>{await api(`/sources/${active.value!.id}/categories/retry`,{method:'POST'})})}
 function saveSectionCategories(block:DocumentBlock){run(async()=>{await api(`/document-blocks/${block.id}/categories`,{method:'PUT',body:JSON.stringify({categories:sectionCategories.value[block.id],rationale:sectionCategoryReasons.value[block.id]||'Reviewed this section against the saved document'})});await loadDocumentBlocks()})}
 async function chooseSource(s:Source){
-	active.value=s;detail.value=null;pages.value=[];documentBlocks.value=[];rightsDecision.value='';rightsNote.value='';sourceAccessReason.value='';pageOffset.value=0;selectedPage.value=null;tab.value='review'
+	active.value=s;detail.value=null;pages.value=[];documentBlocks.value=[];documentTextReview.value=null;documentReviewText.value='';documentReviewNotice.value='';showIndividualBlocks.value=false;showExcludedBlocks.value=false;rightsDecision.value='';rightsNote.value='';sourceAccessReason.value='';pageOffset.value=0;selectedPage.value=null;tab.value='review'
  await refresh()
  const current=detail.value as SourceDetail|null
  if(current){metadata.value={title:current.title,author:current.author,edition:current.edition,publication_info:current.publication_info,repository:current.repository,source_url:current.source_url,rights_statement:current.rights_statement};reviewLiteratureCategories.value=[...current.literature_categories];reviewEvidenceCategory.value=current.evidence_category}
@@ -876,7 +898,7 @@ onUnmounted(()=>{
               <h3>Upload one HTML or TXT document</h3>
               <p class="input-hint">
                 Static HTML and plain text up to 10 MiB. The saved original stays private;
-                every extracted block needs review.
+                after extraction, clean and review the whole document in one editor.
               </p>
               <label
                 >Document<input
@@ -1575,35 +1597,33 @@ onUnmounted(()=>{
               </form>
             </details>
             <div v-if="active.status === 'review'" class="step">
-              <h3>Review extracted blocks</h3>
+              <h3>Review document text in one editor</h3>
+              <p class="input-hint">Remove unwanted paragraphs or trim their ends while keeping retained wording and order. The saved original remains available for citations. Save once to review all blocks; rights and publication are separate steps.</p>
+              <button :disabled="documentReviewBusy || busy || !detail?.document_blocks" @click="openDocumentTextReview">{{ documentReviewBusy ? 'Loading…' : 'Open document text editor' }}</button>
+              <p v-if="documentReviewNotice" role="alert">{{ documentReviewNotice }}</p>
+              <div v-if="documentTextReview" class="book-review">
+                <p>{{ documentTextReview.blocks }} blocks · {{ documentTextReview.pending_blocks }} pending review</p>
+                <textarea v-model="documentReviewText" class="book-review-editor document-review-editor" aria-label="Edit whole document text" spellcheck="false" />
+                <div class="actions"><button class="primary-button" :disabled="documentReviewBusy || (!documentReviewChanged && documentTextReview.pending_blocks===0)" @click="saveDocumentTextReview">{{ documentReviewBusy ? 'Saving…' : 'Save document text review' }}</button></div>
+              </div>
+            </div>
+            <details v-if="active.status === 'review'" class="step" @toggle="showIndividualBlocks=($event.target as HTMLDetailsElement).open">
+              <summary>Review individual retained blocks</summary>
               <p>
-                Original and extracted text are displayed as inert text. Check headings,
-                tables and uncertain boundaries against the saved original.
+                This list shows the text retained for search. Open an original only when you need to compare it.
               </p>
-              <article v-for="block in documentBlocks" :key="block.id" class="step">
+              <label class="preview-option"><input v-model="showExcludedBlocks" type="checkbox" /> Show {{ documentBlocks.filter(block=>block.review_status==='excluded').length }} excluded blocks</label>
+              <article v-for="block in visibleDocumentBlocks" :key="block.id" class="step">
                 <h4>
                   {{ block.block_index + 1 }}. {{ block.kind }} ·
                   {{ block.section_key }} · {{ block.review_status }}
                 </h4>
-                <p v-if="block.heading">Under {{ block.heading }}</p>
                 <p v-if="block.review_status === 'excluded'" class="input-hint">Excluded from search: {{ block.review_note }}. Accept this block to restore it during draft review.</p>
                 <p v-for="warning in block.warnings" :key="warning" class="error">
                   {{ warning }}
                 </p>
-                <div class="compare">
-                  <div>
-                    <b>Original extraction</b>
-                    <pre>{{ block.original_text }}</pre>
-                  </div>
-                  <div>
-                    <b>Reviewed text</b
-                    ><textarea
-                      v-model="blockTexts[block.id]"
-                      rows="5"
-                      :disabled="session.role !== 'admin'"
-                    />
-                  </div>
-                </div>
+                <label>Reviewed text<textarea v-model="blockTexts[block.id]" rows="5" :disabled="session.role !== 'admin' || block.review_status==='excluded'" /></label>
+                <details><summary>Show saved original extraction</summary><pre>{{ block.original_text }}</pre></details>
                 <label
                   >Review note<textarea
                     v-model="blockNotes[block.id]"
@@ -1662,7 +1682,7 @@ onUnmounted(()=>{
                   </button>
                 </details>
               </article>
-            </div>
+            </details>
             <div v-if="active.status === 'review'" class="step">
               <h3>Rights decision"</h3>
               <p v-if="detail.rights_statement">

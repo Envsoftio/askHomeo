@@ -58,6 +58,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/sources/import-document-url", a.importDocumentURL)
 	mux.HandleFunc("POST /api/v1/sources/{id}/reimport-document", a.reimportDocumentURL)
 	mux.HandleFunc("GET /api/v1/sources/{id}/blocks", a.documentBlocks)
+	mux.HandleFunc("GET /api/v1/sources/{id}/review-text", a.documentReviewText)
+	mux.HandleFunc("PUT /api/v1/sources/{id}/review-text", a.saveDocumentReviewText)
 	mux.HandleFunc("POST /api/v1/document-blocks/{id}/review", a.reviewDocumentBlock)
 	mux.HandleFunc("PUT /api/v1/sources/{id}/categories", a.setLiteratureCategories)
 	mux.HandleFunc("POST /api/v1/sources/{id}/categories/retry", a.retryLiteratureClassification)

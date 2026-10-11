@@ -42,7 +42,7 @@ type Result struct {
 
 var whitespace = regexp.MustCompile(`\s+`)
 var htmlStart = regexp.MustCompile(`(?is)^\s*(?:<!doctype\s+html\b|<html\b|<head\b|<body\b|<h[1-6]\b|<p\b)`)
-var htmlTag = regexp.MustCompile(`(?i)<(?:article|main|section|div|h[1-6]|p|table|ul|ol|li|blockquote)\b[^>]*>`)
+var htmlTag = regexp.MustCompile(`(?i)<(?:article|main|section|div|h[1-6]|p|table|ul|ol|li|blockquote)\b[^\r\n>]{0,256}>`)
 var paragraphBreak = regexp.MustCompile(`\r?\n[ \t]*\r?\n`)
 
 // Detect uses bytes first, then MIME type. A filename alone cannot select a format.
@@ -279,6 +279,35 @@ func originalOffset(decoded, charset string, position int, raw []byte) (int, err
 func extractText(decoded string, charset string) (Result, error) {
 	result := Result{}
 	heading := ""
+	add := func(start, end int, kind string) {
+		part := decoded[start:end]
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			return
+		}
+		left := strings.Index(part, trimmed)
+		start += left
+		if kind == "heading" {
+			if passage.SectionLabel(trimmed) == "" {
+				heading = ocrHeadingName(trimmed)
+			}
+			result.Blocks = append(result.Blocks, Block{Key: fmt.Sprintf("paragraph-%d", len(result.Blocks)+1), Kind: kind, Heading: heading, Text: trimmed, StartByte: start, EndByte: start + len(trimmed)})
+			return
+		}
+		// An OCR transcription can have no blank lines for dozens of pages.
+		// Bound review units as well as retrieval passages, preserving exact offsets.
+		runes := []rune(trimmed)
+		byteAt := make([]int, 0, len(runes)+1)
+		for i := range trimmed {
+			if utf8.RuneStart(trimmed[i]) {
+				byteAt = append(byteAt, i)
+			}
+		}
+		byteAt = append(byteAt, len(trimmed))
+		for _, span := range passage.Split(trimmed, 1800) {
+			result.Blocks = append(result.Blocks, Block{Key: fmt.Sprintf("paragraph-%d", len(result.Blocks)+1), Kind: "paragraph", Heading: heading, Text: span.Text, StartByte: start + byteAt[span.Start], EndByte: start + byteAt[span.End]})
+		}
+	}
 	start := 0
 	for start < len(decoded) {
 		breakAt := paragraphBreak.FindStringIndex(decoded[start:])
@@ -286,29 +315,69 @@ func extractText(decoded string, charset string) (Result, error) {
 		if breakAt != nil {
 			end = start + breakAt[0]
 		}
-		part := decoded[start:end]
-		trimmed := strings.TrimSpace(part)
-		if trimmed != "" {
-			key := fmt.Sprintf("paragraph-%d", len(result.Blocks)+1)
-			left := strings.Index(part, trimmed)
-			block := Block{Key: key, Kind: "paragraph", Text: trimmed, StartByte: start + left, EndByte: start + left + len(trimmed)}
-			label := passage.SectionLabel(trimmed)
-			standalone := label == "" || strings.Trim(strings.TrimSpace(trimmed[len(label):]), ".:—- ") == ""
-			if standalone && passage.Heading(trimmed) && !strings.Contains(trimmed, "\n") && len([]rune(trimmed)) <= 80 {
-				if passage.SectionLabel(trimmed) == "" {
-					heading = trimmed
-				}
-				block.Kind = "heading"
+		proseStart := start
+		for lineStart := start; lineStart < end; {
+			lineEnd := lineStart
+			for lineEnd < end && decoded[lineEnd] != '\n' && decoded[lineEnd] != '\r' {
+				lineEnd++
 			}
-			block.Heading = heading
-			result.Blocks = append(result.Blocks, block)
+			line := strings.TrimSpace(decoded[lineStart:lineEnd])
+			if ocrStandaloneHeading(line) {
+				add(proseStart, lineStart, "paragraph")
+				add(lineStart, lineEnd, "heading")
+				proseStart = lineEnd
+			}
+			lineStart = lineEnd + 1
+			if lineEnd+1 < end && decoded[lineEnd] == '\r' && decoded[lineEnd+1] == '\n' {
+				lineStart++
+			}
 		}
+		add(proseStart, end, "paragraph")
 		if breakAt == nil {
 			break
 		}
 		start += breakAt[1]
 	}
 	return result, nil
+}
+
+// Page headers in OCR text may prefix the repeated remedy name with a page
+// number. This is only a layout hint; remedy identity still needs review.
+func ocrHeadingName(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) > 1 && strings.Trim(fields[0], "0123456789") == "" {
+		return strings.Join(fields[1:], " ")
+	}
+	return line
+}
+
+func ocrStandaloneHeading(line string) bool {
+	if line == "" || len([]rune(line)) > 80 || len(strings.Fields(line)) > 9 {
+		return false
+	}
+	name := ocrHeadingName(line)
+	if label := passage.SectionLabel(name); label != "" {
+		return strings.Trim(strings.TrimSpace(name[len(label):]), ".:—- ") == ""
+	}
+	// Some cleaned editions keep the botanical name beside a remedy heading.
+	// The uppercase entry name remains a standalone boundary in that form.
+	if i := strings.Index(name, ".—("); i > 0 && strings.HasSuffix(name, ")") {
+		name = name[:i+1]
+	}
+	letters := 0
+	for _, r := range name {
+		switch {
+		case unicode.IsLetter(r):
+			letters++
+			if !unicode.IsUpper(r) {
+				return false
+			}
+		case unicode.IsSpace(r) || strings.ContainsRune(".,;:'()-", r):
+		default:
+			return false
+		}
+	}
+	return letters >= 4
 }
 
 func extractHTML(decoded string) (Result, error) {

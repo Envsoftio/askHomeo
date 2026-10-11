@@ -144,6 +144,59 @@ func TestTextMateriaMedicaHeadingContext(t *testing.T) {
 	}
 }
 
+func TestOCRTextPageHeadersAndLongUnbrokenSymptoms(t *testing.T) {
+	raw := []byte("MATERIA MEDICA PURA.\r\n                ACONITUM NAPELLUS.\r\n\r\n" +
+		strings.Repeat("   Head pain worse from motion and relieved by rest.\r\n", 100) +
+		"2\r\nACONITUM NAPELLUS.\r\n" +
+		strings.Repeat("   Chest soreness worse at night.\r\n", 100) +
+		"          AMBRA GRISEA, OR AMBROSIACA.\r\n" +
+		strings.Repeat("   Anxiety and trembling.\r\n", 100))
+	out, err := Extract(raw, "text/plain; charset=utf-8", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Blocks) < 8 {
+		t.Fatalf("OCR text was left in oversized review units: %d", len(out.Blocks))
+	}
+	seenAmbra := false
+	for _, b := range out.Blocks {
+		if b.EndByte-b.StartByte > 1900 || string(raw[b.StartByte:b.EndByte]) != b.Text {
+			t.Fatalf("oversized or inexact block: %+v", b)
+		}
+		if strings.Contains(b.Text, "AMBRA GRISEA") {
+			seenAmbra = true
+		}
+		if strings.Contains(b.Text, "Anxiety and trembling") && b.Heading != "AMBRA GRISEA, OR AMBROSIACA." {
+			t.Fatalf("lost remedy context: %+v", b)
+		}
+		if strings.Contains(b.Text, "Chest soreness") && b.Heading != "ACONITUM NAPELLUS." {
+			t.Fatalf("lost page-header context: %+v", b)
+		}
+	}
+	if !seenAmbra {
+		t.Fatal("remedy heading was not isolated")
+	}
+}
+
+func TestOCRProseDoesNotBecomeHTMLBecauseOfAngleBracket(t *testing.T) {
+	raw := []byte("ACONITUM NAPELLUS.\nA note ends with <p\n" + strings.Repeat("ordinary OCR prose\n", 40) + "and a stray > character.\n")
+	format, err := Detect(raw, "text/plain; charset=utf-8")
+	if err != nil || format != "txt" {
+		t.Fatalf("OCR prose detected as %q: %v", format, err)
+	}
+}
+
+func TestCleanedRemedyHeadingWithBotanicalName(t *testing.T) {
+	raw := []byte("ASARUM EUROPAEUM.\n\nEarlier symptoms.\n\nBELLADONNA.—(Atropa Belladonna.)\n\nThis plant may be grown in gardens.\n")
+	out, err := Extract(raw, "text/plain; charset=utf-8", "")
+	if err != nil || len(out.Blocks) != 4 {
+		t.Fatalf("extraction: %+v %v", out, err)
+	}
+	if out.Blocks[2].Kind != "heading" || out.Blocks[3].Heading != "BELLADONNA.—(Atropa Belladonna.)" {
+		t.Fatalf("Belladonna boundary lost: %+v", out.Blocks)
+	}
+}
+
 func TestLegacyMateriaMedicaHeadings(t *testing.T) {
 	raw := []byte(`<p><b>BELLADONNA</b></p><p><strong>Mind.</strong></p><p>Restless; worse noise.</p><p><b>Head.</b> Throbbing.</p><p><b>NUX VOMICA</b></p><p>Stomach symptoms.</p>`)
 	got, err := Extract(raw, "text/html", "")

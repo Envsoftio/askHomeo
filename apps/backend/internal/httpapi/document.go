@@ -239,7 +239,7 @@ func (a *API) reviewDocumentBlock(w http.ResponseWriter, r *http.Request) {
 	if b.Decision != "corrected" {
 		text = ""
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE document_blocks SET review_status=$2,review_note=$3,reviewed_text=CASE WHEN $2='corrected' THEN $4 ELSE original_text END WHERE id=$1`, targetBlock, b.Decision, strings.TrimSpace(b.Note), text)
+	_, err = tx.Exec(r.Context(), `UPDATE document_blocks SET review_status=$2,review_note=$3,reviewed_text=CASE WHEN $2='excluded' THEN '' WHEN $2='corrected' THEN $4 ELSE original_text END WHERE id=$1`, targetBlock, b.Decision, strings.TrimSpace(b.Note), text)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
