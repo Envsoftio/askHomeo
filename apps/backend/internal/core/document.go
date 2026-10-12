@@ -45,8 +45,8 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 	if err != nil {
 		return uuid.Nil, err
 	}
-	if format != "html" && format != "txt" {
-		return uuid.Nil, errors.New("only HTML and TXT are accepted")
+	if format != "html" && format != "txt" && format != "jats" {
+		return uuid.Nil, errors.New("only HTML, TXT and JATS articles are accepted")
 	}
 	extracted, err := document.Extract(raw, info.ContentType, info.CharsetOverride)
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *Store) ImportDocument(ctx context.Context, input io.Reader, info Docume
 		return uuid.Nil, fmt.Errorf("save document source: %w", err)
 	}
 	if len(info.LiteratureCategories) > 0 {
-		_, err = tx.Exec(ctx, `UPDATE sources SET literature_categories=$2,evidence_category=$3,literature_category_origin=$4 WHERE id=$1`, id, info.LiteratureCategories, info.EvidenceCategory, info.LiteratureCategoryOrigin)
+		_, err = tx.Exec(ctx, `UPDATE sources SET literature_categories=$2,evidence_category=$3,evidence_category_origin=CASE WHEN $3<>'unknown' THEN 'manual' ELSE 'fallback' END,literature_category_origin=$4 WHERE id=$1`, id, info.LiteratureCategories, info.EvidenceCategory, info.LiteratureCategoryOrigin)
 		if err != nil {
 			return uuid.Nil, err
 		}

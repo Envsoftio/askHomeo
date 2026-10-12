@@ -20,6 +20,7 @@ import (
 	"homeopath-poc/backend/internal/httpapi"
 	"homeopath-poc/backend/internal/ingest"
 	"homeopath-poc/backend/internal/localllm"
+	"homeopath-poc/backend/internal/paperjobs"
 )
 
 func main() {
@@ -86,6 +87,14 @@ func main() {
 	if *mode == "worker" {
 		workerCtx, cancelWorker := context.WithCancel(ctx)
 		defer cancelWorker()
+		if os.Getenv("PAPER_ACQUISITION_ENABLED") == "1" {
+			go func() {
+				if paperErr := (&paperjobs.Worker{Store: store}).Run(workerCtx); paperErr != nil && !errors.Is(paperErr, context.Canceled) {
+					log.Printf("paper acquisition worker stopped: %v", paperErr)
+					cancelWorker()
+				}
+			}()
+		}
 		go func() {
 			if answerErr := httpapi.RunAnswerWorker(workerCtx, store, model); answerErr != nil && !errors.Is(answerErr, context.Canceled) {
 				log.Printf("answer worker stopped: %v", answerErr)

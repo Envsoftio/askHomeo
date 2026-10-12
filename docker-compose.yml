@@ -61,6 +61,13 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
       CHAT_REVISION: ${CHAT_REVISION:-}
+      PAPER_SEARCH_ENABLED: ${PAPER_SEARCH_ENABLED:-0}
+      PAPER_ACQUISITION_ENABLED: ${PAPER_ACQUISITION_ENABLED:-0}
+      NCBI_API_KEY: ${NCBI_API_KEY:-}
+      UNPAYWALL_CONTACT_EMAIL: ${UNPAYWALL_CONTACT_EMAIL:-}
+      SEMANTIC_SCHOLAR_ENABLED: ${SEMANTIC_SCHOLAR_ENABLED:-0}
+      SEMANTIC_SCHOLAR_API_KEY: ${SEMANTIC_SCHOLAR_API_KEY:-}
+      SEMANTIC_SCHOLAR_COMMERCIAL_PERMISSION_CONFIRMED: ${SEMANTIC_SCHOLAR_COMMERCIAL_PERMISSION_CONFIRMED:-0}
     volumes:
       - ./data/starter-corpus:/app/data/starter-corpus:ro
       - ./data/runtime/assets:/app/data/runtime/assets
@@ -102,6 +109,7 @@ services:
       EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       CHAT_MODEL: ${CHAT_MODEL:-qwen/qwen3-14b}
       CHAT_REVISION: ${CHAT_REVISION:-}
+      PAPER_ACQUISITION_ENABLED: ${PAPER_ACQUISITION_ENABLED:-0}
     volumes:
       - ./data/starter-corpus:/app/data/starter-corpus:ro
       - ./data/runtime/assets:/app/data/runtime/assets

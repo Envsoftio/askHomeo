@@ -1,0 +1,41 @@
+{
+  "checked_at": "2026-10-12",
+  "assessment_scope": "Discovery and rights signals from publisher/institution pages; no blanket methodological-quality or article-level reuse approval",
+  "sites": [
+    {
+      "name": "Journal of Integrated Standardized Homoeopathy",
+      "url": "https://jish-mldtrust.com/",
+      "use": "Candidate journal for DOI-linked article discovery and article-level full-text inspection",
+      "full_text_signal": "Journal pages expose Full text and PDF options for articles",
+      "rights_policy": "CC BY-NC-SA 4.0 generally; commercial rights retained by journal",
+      "policy_url": "https://jish-mldtrust.com/for-authors/",
+      "decision": "reference_only_for_commercial_product_unless_specific_copy_has_separate_permission"
+    },
+    {
+      "name": "Indian Journal of Research in Homoeopathy",
+      "url": "https://www.ijrh.org/journal/",
+      "use": "High-priority official Indian journal catalogue and full-text candidate source",
+      "full_text_signal": "Open online archive with article PDF links",
+      "rights_policy": "CC BY-NC-SA 4.0 on journal policy and article pages",
+      "policy_url": "https://www.ijrh.org/journal/publication_ethics.html",
+      "decision": "reference_only_for_commercial_product_unless_specific_copy_has_separate_permission"
+    },
+    {
+      "name": "MedCrave Online",
+      "url": "https://medcraveonline.com/",
+      "use": "Secondary article discovery; verify article type and methods for each record",
+      "full_text_signal": "IJCAM article pages show HTML full text and PDF",
+      "rights_policy": "Site states CC BY-NC 4.0 and bars commercial reuse without consent",
+      "policy_url": "https://www.medcraveonline.com/copyright-licenses",
+      "decision": "reference_only_for_commercial_product_unless_specific_copy_has_separate_permission"
+    },
+    {
+      "name": "Central Council for Research in Homoeopathy",
+      "url": "https://ccrhindia.ayush.gov.in/",
+      "use": "Official Indian study/publication index and link provenance; reconcile entries with DOI, journal, registry and study site",
+      "full_text_signal": "Published Research Papers page links to journals and DOIs; some council publications are priced",
+      "index_url": "https://ccrhindia.ayush.gov.in/index.php/Publications/PublishedResearchPapers?language_content_entity=en",
+      "decision": "index_only; article rights and quality follow the linked work"
+    }
+  ]
+}

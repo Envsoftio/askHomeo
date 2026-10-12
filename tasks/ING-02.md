@@ -35,6 +35,8 @@
 - A wrong extension/content type, binary TXT, malformed encoding, empty or login page, oversized response, HTML script/form content, and unsupported structure have explicit review or failure outcomes. Private/redirect/rebinding destinations remain blocked by the shared fetcher. Unauthorized upload, import, review and asset reads fail.
 - Focused extraction, locator, import/job-recovery, retrieval and citation fixtures pass; the relevant Go suite and frontend build pass. Exercise the complete UI journey with small permitted HTML and TXT documents and record source/asset/revision IDs plus citation examples. Record live URL checks separately from fixtures; do not claim general website collection from a one-page check.
 
+**Sequencing update — 2026-10-12:** [PAPER-DEV-01](PAPER-DEV-01.md) brings forward only the JATS acquisition/reader/RAG subset needed for scholarly papers. General XML remains ING-04; this does not close ING-06 or change existing HTML/TXT acceptance.
+
 **Following slice:** [ING-06](ING-06.md) delivers structured repertory and materia medica research under roadmap section 42. Then ING-03 adds bounded linked HTML collection and coverage/recovery controls. ING-04 adds schema-aware XML. ING-05 extends non-PDF reader/RAG contracts and acceptance across XML and multi-document sources. PROD-01 recovery and operational alerts remain deferred while this research core work proceeds.
 
 

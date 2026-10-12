@@ -164,9 +164,43 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 	var sectionsJSON []byte
 	var categoryScope []string
 	var categorySnapshot []byte
-	err := a.Store.DB.QueryRow(r.Context(), `SELECT question,status,answer_text,answer_model,answer_revision,prompt_revision,research_mode,omitted_claim_count,research_sections,literature_category_scope,literature_category_snapshot FROM answers WHERE id=$1`, id).Scan(&q, &status, &answer, &model, &revision, &promptRevision, &mode, &omittedClaims, &sectionsJSON, &categoryScope, &categorySnapshot)
+	var paperSearchID *uuid.UUID
+	err := a.Store.DB.QueryRow(r.Context(), `SELECT question,status,answer_text,answer_model,answer_revision,prompt_revision,research_mode,omitted_claim_count,research_sections,literature_category_scope,literature_category_snapshot,paper_search_id FROM answers WHERE id=$1`, id).Scan(&q, &status, &answer, &model, &revision, &promptRevision, &mode, &omittedClaims, &sectionsJSON, &categoryScope, &categorySnapshot, &paperSearchID)
 	if err != nil {
 		fail(w, 404, "answer not found")
+		return
+	}
+	var paperSearch any
+	if paperSearchID != nil {
+		var query, state string
+		var providers []string
+		var cap int
+		var checkedAt time.Time
+		if err := a.Store.DB.QueryRow(r.Context(), `SELECT query,providers,state,cap,created_at FROM paper_searches WHERE id=$1`, *paperSearchID).Scan(&query, &providers, &state, &cap, &checkedAt); err != nil {
+			fail(w, 500, "could not read saved paper search")
+			return
+		}
+		paperSearch = map[string]any{"id": paperSearchID, "query": query, "providers": providers, "state": state, "cap": cap, "searched_at": checkedAt}
+	}
+	affectedSources := []map[string]string{}
+	noticeRows, err := a.Store.DB.Query(r.Context(), `SELECT DISTINCT s.title,s.status,coalesce(sw.notice_type,''),coalesce(sw.notice_url,'') FROM answer_citations ac JOIN chunks c ON c.id=ac.chunk_id JOIN sources s ON s.id=c.source_id LEFT JOIN scholarly_works sw ON sw.source_id=s.id WHERE ac.answer_id=$1 AND (s.status<>'published' OR coalesce(sw.notice_url,'')<>'')`, id)
+	if err != nil {
+		fail(w, 500, "could not read saved evidence status")
+		return
+	}
+	for noticeRows.Next() {
+		var title, state, kind, location string
+		if err = noticeRows.Scan(&title, &state, &kind, &location); err != nil {
+			noticeRows.Close()
+			fail(w, 500, "could not read saved evidence status")
+			return
+		}
+		affectedSources = append(affectedSources, map[string]string{"title": title, "status": state, "notice_type": kind, "notice_url": location})
+	}
+	err = noticeRows.Err()
+	noticeRows.Close()
+	if err != nil {
+		fail(w, 500, "could not read saved evidence status")
 		return
 	}
 	var categoryByChunk map[string]struct {
@@ -266,14 +300,15 @@ func (a *API) savedAnswer(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "could not read research sections")
 		return
 	}
-	write(w, 200, map[string]any{"answer_id": id, "question": q, "status": status, "answer": answer, "answer_model": model, "answer_revision": revision, "prompt_revision": promptRevision, "research_mode": mode, "literature_categories": categoryScope, "category_snapshot": json.RawMessage(categorySnapshot), "omitted_claim_count": omittedClaims, "source_ids": selectedSources, "citations": citations, "searches": searches, "evidence": evidence, "sections": sections})
+	write(w, 200, map[string]any{"answer_id": id, "question": q, "status": status, "answer": answer, "answer_model": model, "answer_revision": revision, "prompt_revision": promptRevision, "research_mode": mode, "literature_categories": categoryScope, "category_snapshot": json.RawMessage(categorySnapshot), "omitted_claim_count": omittedClaims, "source_ids": selectedSources, "paper_search": paperSearch, "affected_sources": affectedSources, "citations": citations, "searches": searches, "evidence": evidence, "sections": sections})
 }
 func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Question   string      `json:"question"`
-		Mode       string      `json:"mode"`
-		SourceIDs  []uuid.UUID `json:"source_ids"`
-		Categories []string    `json:"literature_categories"`
+		Question      string      `json:"question"`
+		Mode          string      `json:"mode"`
+		SourceIDs     []uuid.UUID `json:"source_ids"`
+		Categories    []string    `json:"literature_categories"`
+		PaperSearchID *uuid.UUID  `json:"paper_search_id"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body) != nil {
 		fail(w, 400, "invalid question")
@@ -313,6 +348,10 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		seenSelected[id] = true
 		selected = append(selected, id)
 	}
+	if err := a.validatePaperSearchScope(r.Context(), body.PaperSearchID, selected); err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
 	var runID, configID uuid.UUID
 	var modelID, modelRevision string
 	var modelDimensions int
@@ -343,6 +382,9 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	}
 	filteredContext := context.WithValue(r.Context(), sourceFilterKey{}, selected)
 	filteredContext = context.WithValue(filteredContext, categoryFilterKey{}, body.Categories)
+	if body.PaperSearchID != nil {
+		filteredContext = context.WithValue(filteredContext, paperSearchKey{}, *body.PaperSearchID)
+	}
 	filteredRequest := r.WithContext(filteredContext)
 	if len(body.Categories) == 0 && a.answerSourceQuestion(w, filteredRequest, q, mode, runID, configID) {
 		return
@@ -594,7 +636,7 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 	if omittedClaims > 0 {
 		answerStatus = "partial"
 	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO answers(id,question,status,answer_text,answer_model,answer_revision,prompt_revision,index_run_id,evidence_ids,research_mode,omitted_claim_count,research_sections,answer_job_id,owner_role,owner_principal_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, answerID, q, answerStatus, draft.Answer, a.Model.Config.AnswerModel, a.Model.Config.AnswerRevision, answerPromptRevision, runID, ids, mode, omittedClaims, sectionsJSON, jobIDFromContext(r.Context()), answerOwner(r.Context()), requestPrincipal(r.Context()).ID)
+	_, err = tx.Exec(r.Context(), `INSERT INTO answers(id,question,status,answer_text,answer_model,answer_revision,prompt_revision,index_run_id,evidence_ids,research_mode,omitted_claim_count,research_sections,answer_job_id,owner_role,owner_principal_id,paper_search_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`, answerID, q, answerStatus, draft.Answer, a.Model.Config.AnswerModel, a.Model.Config.AnswerRevision, answerPromptRevision, runID, ids, mode, omittedClaims, sectionsJSON, jobIDFromContext(r.Context()), answerOwner(r.Context()), requestPrincipal(r.Context()).ID, paperSearchIDFromContext(r.Context()))
 	if err != nil {
 		fail(w, 500, "Could not save answer.")
 		return
@@ -1798,7 +1840,7 @@ func (a *API) insufficientWithChecks(w http.ResponseWriter, ctx context.Context,
 		return
 	}
 	defer tx.Rollback(ctx)
-	if _, err = tx.Exec(ctx, `INSERT INTO answers(id,question,status,answer_text,index_run_id,research_mode,answer_job_id,prompt_revision,owner_role,owner_principal_id,literature_category_scope) VALUES($1,$2,'insufficient_evidence',$3,$4,$5,$6,$7,$8,$9,$10)`, id, q, reason, run, mode, jobIDFromContext(ctx), answerPromptRevision, answerOwner(ctx), requestPrincipal(ctx).ID, selectedCategoriesFromContext(ctx)); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO answers(id,question,status,answer_text,index_run_id,research_mode,answer_job_id,prompt_revision,owner_role,owner_principal_id,literature_category_scope,paper_search_id) VALUES($1,$2,'insufficient_evidence',$3,$4,$5,$6,$7,$8,$9,$10,$11)`, id, q, reason, run, mode, jobIDFromContext(ctx), answerPromptRevision, answerOwner(ctx), requestPrincipal(ctx).ID, selectedCategoriesFromContext(ctx), paperSearchIDFromContext(ctx)); err != nil {
 		fail(w, 500, "Could not save research result.")
 		return
 	}

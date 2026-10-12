@@ -1,0 +1,57 @@
+{
+  "version": "2026-10-12-offline-candidates-v1",
+  "status": "local_acquisitions_rights_and_location_recorded_text_pending",
+  "maximum_selected_records": 30,
+  "search_scope": "homeopathy OR homoeopathy with condition and design variants; India study-country requires methods or registry review",
+  "candidates": [
+    {
+      "label": "Mumbai adjunctive COVID-19 trial",
+      "doi": "10.1371/journal.pone.0292783",
+      "pmid": "37967089",
+      "pmcid": "PMC10650991",
+      "kind": "completed_trial_candidate",
+      "temporary_xml_sha256": "87a4cb5177ba2cf404030e599fe465861654d26e8bf4bce140d61252b6a0edd1",
+      "local_source_id": "c2363a8b-dc7e-41cc-bed2-44b653d0d46c",
+      "temporary_xml_bytes": 117487,
+      "rights_signal": "article XML links to CC BY 4.0; user-authorized local rights decision recorded for saved XML only; text and publication pending",
+      "mechanics": "offline parser and synthetic source-to-citation fixture passed",
+      "disposable_revision_id": "7ef3d4a6-6d65-4505-8fa1-9eed8712f817",
+      "candidate_jats_v2_locators": {
+        "trial_design": "jats-00026-p",
+        "primary_outcome": "jats-00066-p",
+        "participant_flow": "jats-00080-p",
+        "outcome_table": "jats-00108-table"
+      },
+      "locator_review": "saved revision queried; exact RQ points and table cells require human verification",
+      "study_country": "IN_recorded_from_reviewed_saved_methods_block",
+      "rq_ids": ["RQ-01", "RQ-02", "RQ-03", "RQ-06", "RQ-08", "RQ-09", "RQ-13", "RQ-14"]
+    },
+    {
+      "label": "ROCM trial protocol",
+      "doi": "10.2196/57905",
+      "pmid": "40106813",
+      "pmcid": "PMC11966070",
+      "kind": "protocol_candidate_trial_not_initiated_or_registered",
+      "temporary_xml_sha256": "59fd81fcd181a1aa3afcff7c4f2bd290a4ce355e72a846102c62da381c1c2c2e",
+      "local_source_id": "d2590e59-f54e-4c64-b99f-80f0931488de",
+      "temporary_xml_bytes": 111158,
+      "rights_signal": "article XML links to CC BY 4.0; user-authorized local rights decision recorded for saved XML only; text and publication pending",
+      "mechanics": "offline parser and synthetic source-to-citation fixture passed",
+      "disposable_revision_id": "755b27c1-15a3-4b18-a0d0-16008b14fdc2",
+      "candidate_jats_v2_locators": {
+        "abstract_methods": "jats-00014-p",
+        "study_design": "jats-00040-p",
+        "intervention": "jats-00062-p"
+      },
+      "locator_review": "saved revision queried; protocol itself says trial not initiated or registered; planned-versus-observed answer requires human verification",
+      "study_country": "unknown_recorded_no_conducted_study_planned_Mumbai_India",
+      "rq_ids": ["RQ-04", "RQ-09", "RQ-12"]
+    },
+    {"label": "Menstrual-irregularities trial", "pmid": "39084625", "pmcid": "PMC11659453", "kind": "candidate_unacquired", "study_country": "unknown_pending_methods_review", "rq_ids": ["RQ-05", "RQ-06", "RQ-08", "RQ-09"]},
+    {"label": "IJRH chronic-rhinosinusitis trial", "url": "https://www.ijrh.org/journal/vol17/iss1/3/", "kind": "reference_only_rights_pending", "study_country": "unknown_pending_methods_review", "rq_ids": ["RQ-07", "RQ-10"]},
+    {"label": "IJRH essential-hypertension trial", "doi": "10.4103/0974-7168.116629", "url": "https://www.ijrh.org/journal/vol7/iss2/4/", "kind": "reference_only_rights_pending", "study_country": "unknown_pending_methods_review", "rq_ids": ["RQ-07", "RQ-08"]}
+  ],
+  "quality_judgments": "not_run",
+  "real_model_answers": "not_run",
+  "human_rights_and_text_review": "user_authorized_local_rights_decisions_recorded; full_text_review_not_run"
+}

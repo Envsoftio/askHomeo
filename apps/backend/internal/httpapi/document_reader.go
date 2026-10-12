@@ -35,7 +35,7 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var sha, relative, format, status, rights, contentType, charset string
-	err = a.Store.DB.QueryRow(r.Context(), `SELECT sa.sha256,sa.object_locator,sa.kind,s.status,s.rights_status,s.document_content_type,s.document_charset_override FROM processing_revisions rev JOIN source_assets sa ON sa.id=rev.source_asset_id JOIN sources s ON s.id=rev.source_id WHERE rev.id=$1 AND rev.source_id=$2 AND sa.kind IN ('html','txt')`, revisionID, sourceID).Scan(&sha, &relative, &format, &status, &rights, &contentType, &charset)
+	err = a.Store.DB.QueryRow(r.Context(), `SELECT sa.sha256,sa.object_locator,sa.kind,s.status,s.rights_status,s.document_content_type,s.document_charset_override FROM processing_revisions rev JOIN source_assets sa ON sa.id=rev.source_asset_id JOIN sources s ON s.id=rev.source_id WHERE rev.id=$1 AND rev.source_id=$2 AND sa.kind IN ('html','txt','jats')`, revisionID, sourceID).Scan(&sha, &relative, &format, &status, &rights, &contentType, &charset)
 	if err != nil {
 		fail(w, 404, "document not found")
 		return
@@ -59,6 +59,7 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decoded, err := document.DecodeOriginal(raw, contentType, charset)
+	if format == "jats" { decoded=string(raw);err=nil }
 	if err != nil {
 		fail(w, 409, "saved document encoding needs review")
 		return
@@ -70,6 +71,12 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "saved markup needs review")
 			return
 		}
+	} else if format == "jats" {
+		parsed, parseErr := document.ExtractJATS(raw)
+		if parseErr != nil { fail(w,409,"saved JATS needs review");return }
+		var rendered strings.Builder
+		for _, block := range parsed.Blocks { rendered.WriteString("<section id=\"");rendered.WriteString(html.EscapeString(block.Key));rendered.WriteString("\"><h3>");rendered.WriteString(html.EscapeString(block.Heading));rendered.WriteString("</h3><p>");rendered.WriteString(html.EscapeString(block.Text));rendered.WriteString("</p></section>") }
+		body=rendered.String()
 	} else {
 		body = "<pre>" + html.EscapeString(decoded) + "</pre>"
 	}

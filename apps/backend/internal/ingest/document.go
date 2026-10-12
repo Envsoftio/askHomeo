@@ -41,6 +41,10 @@ func (w *Worker) processDocument(ctx context.Context, jobID, sourceID uuid.UUID)
 	if result.Warnings == nil {
 		result.Warnings = []string{}
 	}
+	parserVersion := document.Version
+	if format == "jats" {
+		parserVersion = document.JATSVersion
+	}
 	tx, err := w.Store.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -49,7 +53,7 @@ func (w *Worker) processDocument(ctx context.Context, jobID, sourceID uuid.UUID)
 	for i, block := range result.Blocks {
 		status, note := "pending", ""
 		if block.ExclusionReason != "" {
-			status, note = "excluded", document.Version+": "+block.ExclusionReason
+			status, note = "excluded", parserVersion+": "+block.ExclusionReason
 		}
 		blockID := uuid.New()
 		_, err = tx.Exec(ctx, `INSERT INTO document_blocks(id,source_id,source_asset_id,processing_revision_id,block_index,section_key,kind,heading,original_text,reviewed_text,start_byte,end_byte,warnings,review_status,review_note)
@@ -71,7 +75,7 @@ func (w *Worker) processDocument(ctx context.Context, jobID, sourceID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE processing_revisions SET status='review',completed_at=now(),component_versions_json=component_versions_json||jsonb_build_object('document_extractor',$2::text) WHERE id=$1`, revisionID, document.Version)
+	_, err = tx.Exec(ctx, `UPDATE processing_revisions SET status='review',completed_at=now(),component_versions_json=component_versions_json||jsonb_build_object('document_extractor',$2::text) WHERE id=$1`, revisionID, parserVersion)
 	if err != nil {
 		return err
 	}

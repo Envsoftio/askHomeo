@@ -12,7 +12,7 @@ import (
 )
 
 var literatureValues = map[string]bool{"materia_medica": true, "repertory": true, "organon_philosophy": true, "therapeutics": true, "provings": true, "clinical_cases": true, "research": true, "other": true, "unclassified": true}
-var evidenceValues = map[string]bool{"unknown": true, "classical_reference": true, "published_case": true, "trial_study": true, "systematic_review": true, "trial_registration": true, "guideline_safety": true, "other": true}
+var evidenceValues = map[string]bool{"unknown": true, "classical_reference": true, "published_case": true, "trial_study": true, "observational_study": true, "study_protocol": true, "systematic_review": true, "trial_registration": true, "guideline_safety": true, "other": true}
 
 func validLiteratureCategories(values []string) bool {
 	if len(values) == 0 || len(values) > 8 {
@@ -90,7 +90,7 @@ func (a *API) setLiteratureCategories(w http.ResponseWriter, r *http.Request) {
 	if body.EvidenceCategory == "" {
 		body.EvidenceCategory = previousEvidence
 	}
-	_, err = tx.Exec(r.Context(), `UPDATE sources SET literature_categories=$2,literature_category_origin=$3,evidence_category=$4,updated_at=now() WHERE id=$1`, id, body.Categories, newOrigin, body.EvidenceCategory)
+	_, err = tx.Exec(r.Context(), `UPDATE sources SET literature_categories=$2,literature_category_origin=$3,evidence_category=$4,evidence_category_origin=CASE WHEN $5 THEN 'manual' ELSE evidence_category_origin END,updated_at=now() WHERE id=$1`, id, body.Categories, newOrigin, body.EvidenceCategory, body.EvidenceCategory != "")
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -147,13 +147,14 @@ func (a *API) retryLiteratureClassification(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	suggestion := classify.Suggest(content)
+	evidenceSuggestion := classify.SuggestEvidence(content)
 	evidence, _ := json.Marshal(suggestion.Evidence)
-	_, err = a.Store.DB.Exec(r.Context(), `INSERT INTO literature_category_suggestions(processing_revision_id,source_id,source_asset_id,classifier_version,categories,state,reason,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb) ON CONFLICT(processing_revision_id) DO UPDATE SET classifier_version=EXCLUDED.classifier_version,categories=EXCLUDED.categories,state=EXCLUDED.state,reason=EXCLUDED.reason,evidence=EXCLUDED.evidence`, revisionID, id, assetID, classify.Version, suggestion.Categories, suggestion.State, suggestion.Reason, string(evidence))
+	_, err = a.Store.DB.Exec(r.Context(), `INSERT INTO literature_category_suggestions(processing_revision_id,source_id,source_asset_id,classifier_version,categories,state,reason,evidence,evidence_category,evidence_state,evidence_reason,evidence_classifier_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12) ON CONFLICT(processing_revision_id) DO UPDATE SET classifier_version=EXCLUDED.classifier_version,categories=EXCLUDED.categories,state=EXCLUDED.state,reason=EXCLUDED.reason,evidence=EXCLUDED.evidence,evidence_category=EXCLUDED.evidence_category,evidence_state=EXCLUDED.evidence_state,evidence_reason=EXCLUDED.evidence_reason,evidence_classifier_version=EXCLUDED.evidence_classifier_version`, revisionID, id, assetID, classify.Version, suggestion.Categories, suggestion.State, suggestion.Reason, string(evidence), evidenceSuggestion.Category, evidenceSuggestion.State, evidenceSuggestion.Reason, classify.EvidenceVersion)
 	if err != nil {
 		fail(w, 500, "could not save classification suggestion")
 		return
 	}
-	write(w, 200, suggestion)
+	write(w, 200, map[string]any{"categories": suggestion.Categories, "state": suggestion.State, "reason": suggestion.Reason, "evidence": suggestion.Evidence, "suggested_evidence_category": evidenceSuggestion.Category, "evidence_state": evidenceSuggestion.State, "evidence_reason": evidenceSuggestion.Reason})
 }
 
 func (a *API) setDocumentBlockCategories(w http.ResponseWriter, r *http.Request) {

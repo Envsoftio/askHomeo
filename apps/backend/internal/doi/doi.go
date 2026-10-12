@@ -16,17 +16,24 @@ import (
 )
 
 type Record struct {
-	DOI                 string `json:"doi"`
-	Title               string `json:"title"`
-	Authors             string `json:"authors"`
-	Year                int    `json:"publication_year"`
-	Publisher           string `json:"publisher"`
-	WorkType            string `json:"work_type"`
-	DOIURL              string `json:"doi_url"`
-	PDFURL              string `json:"pdf_url"`
-	LicenseURL          string `json:"license_url"`
-	Provider            string `json:"metadata_provider"`
-	RetractionNoticeURL string `json:"retraction_notice_url"`
+	DOI                 string         `json:"doi"`
+	Title               string         `json:"title"`
+	Authors             string         `json:"authors"`
+	Year                int            `json:"publication_year"`
+	Publisher           string         `json:"publisher"`
+	WorkType            string         `json:"work_type"`
+	DOIURL              string         `json:"doi_url"`
+	PDFURL              string         `json:"pdf_url"`
+	LicenseURL          string         `json:"license_url"`
+	Provider            string         `json:"metadata_provider"`
+	RetractionNoticeURL string         `json:"retraction_notice_url"`
+	Updates             []UpdateNotice `json:"updates,omitempty"`
+}
+
+type UpdateNotice struct {
+	DOI  string `json:"doi"`
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 var doiPattern = regexp.MustCompile(`(?i)^10\.[0-9]{4,9}/[^\s?#]{1,250}$`)
@@ -146,12 +153,16 @@ func (c *Client) Lookup(ctx context.Context, input string) (Record, error) {
 	}
 	r := Record{DOI: name, Title: strings.TrimSpace(m.Title[0]), Authors: strings.Join(authors, ", "), Publisher: m.Publisher, WorkType: m.Type, DOIURL: "https://doi.org/" + name, Provider: "Crossref"}
 	for _, update := range m.UpdatedBy {
-		if !strings.EqualFold(update.Type, "retraction") {
+		kind := strings.ToLower(strings.TrimSpace(update.Type))
+		if !recognizedCrossrefUpdate(kind) {
 			continue
 		}
 		if noticeDOI, err := Normalize(update.DOI); err == nil {
-			r.RetractionNoticeURL = "https://doi.org/" + noticeDOI
-			break
+			location := "https://doi.org/" + noticeDOI
+			r.Updates = append(r.Updates, UpdateNotice{DOI: noticeDOI, Type: kind, URL: location})
+			if kind == "retraction" && r.RetractionNoticeURL == "" {
+				r.RetractionNoticeURL = location
+			}
 		}
 	}
 	if len(m.Published.DateParts) > 0 && len(m.Published.DateParts[0]) > 0 {
@@ -185,6 +196,14 @@ func (c *Client) Lookup(ctx context.Context, input string) (Record, error) {
 		}
 	}
 	return r, nil
+}
+
+func recognizedCrossrefUpdate(kind string) bool {
+	switch kind {
+	case "addendum", "clarification", "correction", "corrigendum", "erratum", "expression_of_concern", "new_edition", "new_version", "partial_retraction", "removal", "retraction", "withdrawal":
+		return true
+	}
+	return false
 }
 
 func licenseStarted(parts [][]int) bool {

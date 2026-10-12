@@ -24,6 +24,7 @@ import (
 	"homeopath-poc/backend/internal/doi"
 	"homeopath-poc/backend/internal/localllm"
 	"homeopath-poc/backend/internal/safefetch"
+	"homeopath-poc/backend/internal/scholarly"
 )
 
 type API struct {
@@ -35,6 +36,7 @@ type API struct {
 	DOI               *doi.Client
 	Archive           *archive.Client
 	Fetcher           *safefetch.Fetcher
+	Scholarly         *scholarly.Client
 	adminUsername     string
 	adminPassword     string
 	adminSessionToken string
@@ -111,6 +113,16 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/repositories/archive/search", a.searchArchive)
 	mux.HandleFunc("GET /api/v1/repositories/archive/items/{id}", a.archiveItem)
 	mux.HandleFunc("POST /api/v1/doi-references", a.addDOIReference)
+	mux.HandleFunc("GET /api/v1/papers/search", a.searchPapers)
+	mux.HandleFunc("POST /api/v1/papers/references", a.savePaperReference)
+	mux.HandleFunc("GET /api/v1/papers/references", a.paperReferences)
+	mux.HandleFunc("PUT /api/v1/papers/references/{id}/study-location", a.reviewStudyLocation)
+	mux.HandleFunc("POST /api/v1/papers/references/{id}/acquire", a.acquirePaper)
+	mux.HandleFunc("GET /api/v1/papers/references/{id}/locations", a.paperLocations)
+	mux.HandleFunc("POST /api/v1/papers/references/{id}/refresh-notice", a.refreshPaperNotice)
+	mux.HandleFunc("GET /api/v1/papers/acquisitions/{id}", a.paperAcquisition)
+	mux.HandleFunc("POST /api/v1/papers/acquisitions/{id}/cancel", a.cancelPaperAcquisition)
+	mux.HandleFunc("POST /api/v1/papers/acquisitions/{id}/retry", a.retryPaperAcquisition)
 	mux.HandleFunc("GET /api/v1/doi-references", a.doiReferences)
 	mux.HandleFunc("DELETE /api/v1/doi-references/{id}", a.deleteDOIReference)
 	mux.HandleFunc("POST /api/v1/doi-references/{id}/import", a.importDOIReference)
@@ -444,7 +456,7 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var retractionNoticeURL string
-	if err = a.Store.DB.QueryRow(r.Context(), `WITH RECURSIVE lineage(id,supersedes_source_id) AS (SELECT id,supersedes_source_id FROM sources WHERE id=$1 UNION ALL SELECT s.id,s.supersedes_source_id FROM sources s JOIN lineage l ON s.id=l.supersedes_source_id) SELECT coalesce((SELECT d.retraction_notice_url FROM doi_references d WHERE d.source_id IN (SELECT id FROM lineage) AND d.retraction_notice_url<>'' LIMIT 1),'')`, id).Scan(&retractionNoticeURL); err != nil {
+	if err = a.Store.DB.QueryRow(r.Context(), `WITH RECURSIVE lineage(id,supersedes_source_id) AS (SELECT id,supersedes_source_id FROM sources WHERE id=$1 UNION ALL SELECT s.id,s.supersedes_source_id FROM sources s JOIN lineage l ON s.id=l.supersedes_source_id) SELECT coalesce((SELECT notice FROM (SELECT d.retraction_notice_url AS notice FROM doi_references d WHERE d.source_id IN (SELECT id FROM lineage) UNION ALL SELECT sw.notice_url FROM scholarly_works sw WHERE sw.source_id IN (SELECT id FROM lineage)) n WHERE notice<>'' LIMIT 1),'')`, id).Scan(&retractionNoticeURL); err != nil {
 		fail(w, 500, "could not read publication status")
 		return
 	}
@@ -464,8 +476,8 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var categories, suggested []string
-	var categoryOrigin, suggestionState, suggestionReason, classifierVersion, evidenceCategory string
-	if err = a.Store.DB.QueryRow(r.Context(), `SELECT s.literature_categories,s.literature_category_origin,s.evidence_category,coalesce(cs.categories,ARRAY['unclassified']::text[]),coalesce(cs.state,''),coalesce(cs.reason,''),coalesce(cs.classifier_version,'') FROM sources s LEFT JOIN literature_category_suggestions cs ON cs.processing_revision_id=s.current_revision_id WHERE s.id=$1`, id).Scan(&categories, &categoryOrigin, &evidenceCategory, &suggested, &suggestionState, &suggestionReason, &classifierVersion); err != nil {
+	var categoryOrigin, suggestionState, suggestionReason, classifierVersion, evidenceCategory, evidenceOrigin, suggestedEvidence, evidenceState, evidenceReason, evidenceClassifierVersion string
+	if err = a.Store.DB.QueryRow(r.Context(), `SELECT s.literature_categories,s.literature_category_origin,s.evidence_category,s.evidence_category_origin,coalesce(cs.categories,ARRAY['unclassified']::text[]),coalesce(cs.state,''),coalesce(cs.reason,''),coalesce(cs.classifier_version,''),coalesce(cs.evidence_category,'unknown'),coalesce(cs.evidence_state,''),coalesce(cs.evidence_reason,''),coalesce(cs.evidence_classifier_version,'') FROM sources s LEFT JOIN literature_category_suggestions cs ON cs.processing_revision_id=s.current_revision_id WHERE s.id=$1`, id).Scan(&categories, &categoryOrigin, &evidenceCategory, &evidenceOrigin, &suggested, &suggestionState, &suggestionReason, &classifierVersion, &suggestedEvidence, &evidenceState, &evidenceReason, &evidenceClassifierVersion); err != nil {
 		fail(w, 500, "could not read literature categories")
 		return
 	}
@@ -479,7 +491,7 @@ func (a *API) source(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "could not read collection eligibility")
 		return
 	}
-	write(w, 200, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "literature_categories": categories, "literature_category_origin": categoryOrigin, "evidence_category": evidenceCategory, "suggested_categories": suggested, "classification_state": suggestionState, "classification_reason": suggestionReason, "classifier_version": classifierVersion, "document_format": documentFormat, "document_blocks": blockCount, "document_blocks_reviewed": reviewedBlocks, "requested_url": requestedURL, "final_url": finalURL, "transport": transport, "acquired_at": acquiredAt, "pdf_sha256": sha, "asset_sha256": assetSHA, "collection_snapshot_id": collectionSnapshotID, "retrieval_eligible": retrievalEligible, "pages_read": pages, "pages_reviewed": reviewed, "unclassified_pages": unclassified, "missing_text_pages": missing, "suspect_text_pages": suspect, "text_pages_checked": checked, "text_pages_total": textTotal, "text_qa_status": textQAStatus, "text_qa_error": textQAError, "auto_blank_pages": autoBlank, "triage_status": triageStatus, "triage_error": triageError, "triage_completed": triageDone, "triage_total": triageTotal, "review_coverage": map[string]bool{"front": front > 0, "beginning": beginning > 0, "middle": middle > 0, "end": end > 0}, "pdf_url": "/api/v1/sources/" + id.String() + "/pdf", "source_url": sourceURL, "pdf_origin_url": pdfOriginURL, "rights_mark": rightsMark, "rights_evidence_url": rightsEvidenceURL, "edition": edition, "publication_info": publicationInfo, "repository": repository, "rights_statement": rightsStatement, "retraction_notice_url": retractionNoticeURL, "edition_id": editionID, "source_record_id": recordID, "source_asset_id": assetID, "processing_revision_id": revisionID, "published_revision_id": publishedRevisionID, "supersedes_source_id": supersedesID, "rights_decision_id": rightsDecisionID, "superseded": superseded})
+	write(w, 200, map[string]any{"id": id, "title": title, "author": author, "status": status, "rights_status": rights, "literature_categories": categories, "literature_category_origin": categoryOrigin, "evidence_category": evidenceCategory, "evidence_category_origin": evidenceOrigin, "suggested_evidence_category": suggestedEvidence, "evidence_classification_state": evidenceState, "evidence_classification_reason": evidenceReason, "evidence_classifier_version": evidenceClassifierVersion, "suggested_categories": suggested, "classification_state": suggestionState, "classification_reason": suggestionReason, "classifier_version": classifierVersion, "document_format": documentFormat, "document_blocks": blockCount, "document_blocks_reviewed": reviewedBlocks, "requested_url": requestedURL, "final_url": finalURL, "transport": transport, "acquired_at": acquiredAt, "pdf_sha256": sha, "asset_sha256": assetSHA, "collection_snapshot_id": collectionSnapshotID, "retrieval_eligible": retrievalEligible, "pages_read": pages, "pages_reviewed": reviewed, "unclassified_pages": unclassified, "missing_text_pages": missing, "suspect_text_pages": suspect, "text_pages_checked": checked, "text_pages_total": textTotal, "text_qa_status": textQAStatus, "text_qa_error": textQAError, "auto_blank_pages": autoBlank, "triage_status": triageStatus, "triage_error": triageError, "triage_completed": triageDone, "triage_total": triageTotal, "review_coverage": map[string]bool{"front": front > 0, "beginning": beginning > 0, "middle": middle > 0, "end": end > 0}, "pdf_url": "/api/v1/sources/" + id.String() + "/pdf", "source_url": sourceURL, "pdf_origin_url": pdfOriginURL, "rights_mark": rightsMark, "rights_evidence_url": rightsEvidenceURL, "edition": edition, "publication_info": publicationInfo, "repository": repository, "rights_statement": rightsStatement, "retraction_notice_url": retractionNoticeURL, "edition_id": editionID, "source_record_id": recordID, "source_asset_id": assetID, "processing_revision_id": revisionID, "published_revision_id": publishedRevisionID, "supersedes_source_id": supersedesID, "rights_decision_id": rightsDecisionID, "superseded": superseded})
 }
 func (a *API) pages(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseID(w, r)

@@ -1,0 +1,79 @@
+{
+  "status": "local_rights_and_location_recorded_text_review_pending",
+  "reviewer_instruction": "The user authorized local pilot rights and location decisions, which were recorded through the application for the exact acquired XML copies. These decisions do not approve the remaining extracted text, figures or attachments. Inspect the saved original and each pending block in the app before recording text decisions or publishing. Prior disposable revision IDs are diagnostic locators, not production approvals.",
+  "required_rights_checks": ["exact version and holder", "license and attribution", "storage", "indexing", "excerpt display", "model-provider transmission", "commercial use"],
+  "required_text_checks": ["article identity", "section and table coverage", "methods and results against original", "missing figures and supplements", "study-country evidence", "protocol versus completed report"],
+  "papers": [
+    {
+      "pmcid": "PMC10650991",
+      "pmid": "37967089",
+      "doi": "10.1371/journal.pone.0292783",
+      "version": "Europe PMC article XML candidate",
+      "saved_original_sha256": "87a4cb5177ba2cf404030e599fe465861654d26e8bf4bce140d61252b6a0edd1",
+      "disposable_revision_id": "7ef3d4a6-6d65-4505-8fa1-9eed8712f817",
+      "local_source_id": "c2363a8b-dc7e-41cc-bed2-44b653d0d46c",
+      "local_revision_id": "af4da95f-fcb1-463e-a88a-663ff944d17c",
+      "license_signal_in_article_xml": "https://creativecommons.org/licenses/by/4.0/",
+      "review_locator_candidates": ["jats-00026-p", "jats-00044-p", "jats-00066-p", "jats-00080-p", "jats-00108-table"],
+      "assistant_precheck": {
+        "checked_at": "2026-10-12",
+        "status": "evidence_checked_not_human_approved",
+        "publisher_article_url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0292783",
+        "rights": "The exact saved XML and publisher article identify DOI 10.1371/journal.pone.0292783 and state CC BY 4.0. That license permits commercial reuse with attribution, license link and change notice; verify attribution display, third-party/attachment rights and model-provider terms for the actual deployment before an allowed decision.",
+        "text": "The JATS v2 parser returned 215 blocks including 81 paragraphs and all 9 XML table elements. Sampled trial-design, study-setting and participant-flow blocks map to saved XML byte spans. This is not a complete text/cell audit: 2 figures, 4 supplementary-material elements and 1 displayed formula need separate inspection. The original and extraction must be compared before accepting blocks.",
+        "study_country_suggestion": "IN",
+        "study_country_evidence": "jats-00044-p, Methods / 2.3 Study setting: patients were recruited at St. George's Hospital, Mumbai, Maharashtra, India; this is study-site evidence rather than author affiliation. Confirm against the saved original in the app."
+      },
+      "rights_decision": {
+        "status": "allowed_for_saved_article_xml",
+        "basis": "User explicitly authorized local pilot use; exact XML SHA matched PLOS article DOI and CC BY 4.0 statement. Application decision limits scope to article XML, requires attribution, and excludes separate media and supplements.",
+        "application_decision_id": "5ac5a29a-b776-4cf9-abdd-54b008d166ed",
+        "recorded_by": "local administrator acting on user authorization",
+        "recorded_at": "2026-10-12"
+      },
+      "text_decision": null,
+      "study_country_decision": {
+        "status": "reviewed_in_application",
+        "value": "IN",
+        "evidence_block_id": "26668a2e-2dfd-412d-b5b7-480c38a3cd66",
+        "evidence_locator": "jats-00044-p",
+        "basis": "Saved Methods setting identifies recruitment at St. George Hospital, Mumbai, India; one exact location block was accepted after AI-assisted source comparison on user authorization. This is not full-article text approval."
+      }
+    },
+    {
+      "pmcid": "PMC11966070",
+      "pmid": "40106813",
+      "doi": "10.2196/57905",
+      "version": "Europe PMC article XML candidate; protocol says the trial was not initiated or registered",
+      "saved_original_sha256": "59fd81fcd181a1aa3afcff7c4f2bd290a4ce355e72a846102c62da381c1c2c2e",
+      "disposable_revision_id": "755b27c1-15a3-4b18-a0d0-16008b14fdc2",
+      "local_source_id": "d2590e59-f54e-4c64-b99f-80f0931488de",
+      "local_revision_id": "eb6eb031-f5cc-4ea4-929e-34336611bd5e",
+      "license_signal_in_article_xml": "https://creativecommons.org/licenses/by/4.0/",
+      "review_locator_candidates": ["jats-00014-p", "jats-00016-p", "jats-00040-p", "jats-00046-p", "jats-00062-p"],
+      "assistant_precheck": {
+        "checked_at": "2026-10-12",
+        "status": "evidence_checked_not_human_approved",
+        "publisher_article_url": "https://www.researchprotocols.org/2025/1/e57905",
+        "rights": "The exact saved XML and publisher article identify DOI 10.2196/57905 and state CC BY 4.0. JMIR additionally requires complete bibliographic information, original-publication link, copyright and license notice. Verify attachment rights, attribution display and model-provider terms for the actual deployment before an allowed decision.",
+        "text": "The JATS v2 parser returned 313 blocks including 156 paragraphs and 44 list items. Sampled planned-setting and noninitiation passages map to saved XML byte spans. It warns about 2 unextracted graphics and 14 supplementary-material elements, including duplicated XML appendix entries. The original and extraction still require a complete human check.",
+        "study_country_suggestion": "no_actual_study_country",
+        "study_country_evidence": "jats-00046-p says the trial was planned for St. George's and JJ Hospital, Mumbai. jats-00016-p says it was not initiated or registered. Record India only as the planned location, not the country of a conducted trial; do not present this protocol as outcome evidence."
+      },
+      "rights_decision": {
+        "status": "allowed_for_saved_article_xml",
+        "basis": "User explicitly authorized local pilot use; exact XML SHA matched JMIR article DOI and CC BY 4.0 statement. Application decision requires complete JMIR attribution and excludes separate multimedia appendices.",
+        "application_decision_id": "13d923a5-33b1-4c33-b758-218cca78fa3f",
+        "recorded_by": "local administrator acting on user authorization",
+        "recorded_at": "2026-10-12"
+      },
+      "text_decision": null,
+      "study_country_decision": {
+        "status": "reviewed_in_application",
+        "value": "unknown",
+        "evidence_locator": "jats-00016-p",
+        "basis": "The paper says the planned Mumbai trial was never initiated or registered; there is no conducted study country or observed treatment result."
+      }
+    }
+  ]
+}

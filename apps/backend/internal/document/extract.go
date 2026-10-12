@@ -57,6 +57,9 @@ func Detect(raw []byte, contentType string) (string, error) {
 	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("%PDF-")) {
 		return "", errors.New("PDF bytes require PDF intake")
 	}
+	if isJATS(raw, mimeType) {
+		return "jats", nil
+	}
 	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("<?xml")) || mimeType == "application/xml" || mimeType == "text/xml" {
 		return "", errors.New("XML is not supported by single-document HTML/TXT intake")
 	}
@@ -78,6 +81,12 @@ func Extract(raw []byte, contentType, charsetOverride string) (Result, error) {
 	format, err := Detect(raw, contentType)
 	if err != nil {
 		return Result{}, err
+	}
+	if format == "jats" {
+		if charsetOverride != "" {
+			return Result{}, errors.New("JATS encoding override is unsupported")
+		}
+		return ExtractJATS(raw)
 	}
 	decoded, charset, err := decode(raw, contentType, charsetOverride)
 	if err != nil {

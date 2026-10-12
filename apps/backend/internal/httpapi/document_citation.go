@@ -62,7 +62,7 @@ func (a *API) rawDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var sha, relative, format, status, rights string
-	err = a.Store.DB.QueryRow(r.Context(), `SELECT sa.sha256,sa.object_locator,sa.kind,s.status,s.rights_status FROM processing_revisions rev JOIN source_assets sa ON sa.id=rev.source_asset_id JOIN sources s ON s.id=rev.source_id WHERE rev.id=$1 AND rev.source_id=$2 AND sa.kind IN ('html','txt')`, revisionID, sourceID).Scan(&sha, &relative, &format, &status, &rights)
+	err = a.Store.DB.QueryRow(r.Context(), `SELECT sa.sha256,sa.object_locator,sa.kind,s.status,s.rights_status FROM processing_revisions rev JOIN source_assets sa ON sa.id=rev.source_asset_id JOIN sources s ON s.id=rev.source_id WHERE rev.id=$1 AND rev.source_id=$2 AND sa.kind IN ('html','txt','jats')`, revisionID, sourceID).Scan(&sha, &relative, &format, &status, &rights)
 	if err != nil {
 		fail(w, 404, "document not found")
 		return

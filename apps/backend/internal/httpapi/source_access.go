@@ -101,6 +101,12 @@ func (a *API) setSourceAccess(w http.ResponseWriter, r *http.Request, enable boo
 			fail(w, 409, "Only an allowed, current disabled source can be restored.")
 			return
 		}
+		var recordedNotice string
+		err = tx.QueryRow(r.Context(), `SELECT coalesce((SELECT notice FROM (SELECT retraction_notice_url AS notice FROM doi_references WHERE source_id=$1 UNION ALL SELECT notice_url FROM scholarly_works WHERE source_id=$1) n WHERE notice<>'' LIMIT 1),'')`, id).Scan(&recordedNotice)
+		if err != nil || recordedNotice != "" {
+			fail(w, 409, "A recorded article notice blocks restoration; review the linked notice first.")
+			return
+		}
 		var prior string
 		err = tx.QueryRow(r.Context(), `SELECT previous_status FROM source_access_decisions WHERE source_id=$1 AND action='disable' ORDER BY created_at DESC LIMIT 1`, id).Scan(&prior)
 		if err != nil || prior != "published" {

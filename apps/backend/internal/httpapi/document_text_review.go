@@ -54,7 +54,7 @@ func documentReviewHash(blocks []collectionReviewBlock) string {
 }
 
 func (a *API) readDocumentReview(r *http.Request, id uuid.UUID) (uuid.UUID, []collectionReviewBlock, error) {
-	query := `SELECT current_revision_id FROM sources WHERE id=$1 AND document_format IN ('html','txt') AND status='review' AND removed_at IS NULL`
+	query := `SELECT current_revision_id FROM sources WHERE id=$1 AND document_format IN ('html','txt','jats') AND status='review' AND removed_at IS NULL`
 	var revision uuid.UUID
 	if err := a.Store.DB.QueryRow(r.Context(), query, id).Scan(&revision); err != nil {
 		return uuid.Nil, nil, errors.New("document is not available for text review")
@@ -159,7 +159,7 @@ func (a *API) saveDocumentReviewText(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	var revision, assetID uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT current_revision_id,primary_asset_id FROM sources WHERE id=$1 AND document_format IN ('html','txt') AND status='review' AND removed_at IS NULL FOR UPDATE`, id).Scan(&revision, &assetID)
+	err = tx.QueryRow(ctx, `SELECT current_revision_id,primary_asset_id FROM sources WHERE id=$1 AND document_format IN ('html','txt','jats') AND status='review' AND removed_at IS NULL FOR UPDATE`, id).Scan(&revision, &assetID)
 	if err != nil || revision != body.RevisionID {
 		fail(w, 409, "document changed; reload the text editor")
 		return

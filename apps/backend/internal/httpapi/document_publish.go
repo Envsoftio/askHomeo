@@ -23,13 +23,22 @@ func (a *API) publishDocument(w http.ResponseWriter, r *http.Request, id uuid.UU
 	defer tx.Rollback(ctx)
 	var status, rights, title, author string
 	var revisionID, assetID, rightsID uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT status,rights_status,title,author,current_revision_id,primary_asset_id FROM sources WHERE id=$1 AND document_format IN ('html','txt') FOR UPDATE`, id).Scan(&status, &rights, &title, &author, &revisionID, &assetID)
+	err = tx.QueryRow(ctx, `SELECT status,rights_status,title,author,current_revision_id,primary_asset_id FROM sources WHERE id=$1 AND document_format IN ('html','txt','jats') FOR UPDATE`, id).Scan(&status, &rights, &title, &author, &revisionID, &assetID)
 	if err != nil {
 		fail(w, 404, "document source not found")
 		return
 	}
 	if status != "review" || rights != "allowed" {
 		fail(w, 409, "document review and an allowed rights decision are required")
+		return
+	}
+	var noticeURL string
+	if err = tx.QueryRow(ctx, `SELECT coalesce((SELECT sw.notice_url FROM scholarly_works sw WHERE sw.source_id=$1 AND sw.notice_url<>'' LIMIT 1),'')`, id).Scan(&noticeURL); err != nil {
+		fail(w, 500, "could not check scholarly notice status")
+		return
+	}
+	if noticeURL != "" {
+		fail(w, 409, "This article has a recorded notice and cannot be published for answers. See "+noticeURL)
 		return
 	}
 	if strings.HasPrefix(title, "Untitled document (verify details)") || strings.HasPrefix(author, "Unknown author (verify details)") {

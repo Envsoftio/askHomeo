@@ -6,17 +6,22 @@ import RepertoryReview from './components/RepertoryReview.vue'
 import RepertoryBrowser from './components/RepertoryBrowser.vue'
 import MateriaMedicaReview from './components/MateriaMedicaReview.vue'
 import SourceLibrary, {type LibraryGroup} from './components/SourceLibrary.vue'
+import FindPapers from './components/FindPapers.vue'
 
-type SourceDetail=Source&{document_blocks:number,document_blocks_reviewed:number,requested_url:string,final_url:string,transport:string,acquired_at:string,pdf_sha256:string,pages_reviewed:number,unclassified_pages:number,missing_text_pages:number,suspect_text_pages:number,text_pages_checked:number,text_pages_total:number,text_qa_status:string,text_qa_error:string,auto_blank_pages:number,triage_status:string,triage_error:string,triage_completed:number,triage_total:number,review_coverage:{front:boolean,beginning:boolean,middle:boolean,end:boolean},rights_mark:string,rights_evidence_url:string,source_url:string,pdf_origin_url:string,edition:string,publication_info:string,repository:string,rights_statement:string,retraction_notice_url:string,edition_id:string,source_record_id:string,source_asset_id:string,processing_revision_id:string,published_revision_id:string|null,rights_decision_id:string|null,suggested_categories:string[],classification_state:string,classification_reason:string,classifier_version:string,literature_category_origin:string}
+type SourceDetail=Source&{document_blocks:number,document_blocks_reviewed:number,requested_url:string,final_url:string,transport:string,acquired_at:string,pdf_sha256:string,pages_reviewed:number,unclassified_pages:number,missing_text_pages:number,suspect_text_pages:number,text_pages_checked:number,text_pages_total:number,text_qa_status:string,text_qa_error:string,auto_blank_pages:number,triage_status:string,triage_error:string,triage_completed:number,triage_total:number,review_coverage:{front:boolean,beginning:boolean,middle:boolean,end:boolean},rights_mark:string,rights_evidence_url:string,source_url:string,pdf_origin_url:string,edition:string,publication_info:string,repository:string,rights_statement:string,retraction_notice_url:string,edition_id:string,source_record_id:string,source_asset_id:string,processing_revision_id:string,published_revision_id:string|null,rights_decision_id:string|null,suggested_categories:string[],classification_state:string,classification_reason:string,classifier_version:string,literature_category_origin:string,evidence_category_origin:string,suggested_evidence_category:string,evidence_classification_state:string,evidence_classification_reason:string,evidence_classifier_version:string}
 type DocumentBlock={id:string,block_index:number,section_key:string,kind:string,heading:string,original_text:string,reviewed_text:string,start_byte:number,end_byte:number,review_status:string,review_note:string,warnings:string[],literature_categories:string[],category_override:boolean}
 type DOIReference={id:string,doi:string,title:string,authors:string,publication_year:number,publisher:string,work_type:string,doi_url:string,pdf_available:boolean,license_url:string,metadata_provider:string,source_id:string,retraction_notice_url:string}
 type ArchiveWork={identifier:string,title:string,creator:string,year:string,record_url:string}
 type ArchivePDF={name:string,url:string,bytes:number,source:string}
 type ArchiveItem=ArchiveWork&{publication_info:string,rights:string,license_url:string,pdfs:ArchivePDF[]}
-const tab=ref<'ask'|'sources'|'review'|'activity'|'repertory'|'materia-medica'>('ask')
+const tab=ref<'ask'|'papers'|'sources'|'review'|'activity'|'repertory'|'materia-medica'>('ask')
+const paperSearchScope=ref<{sourceId:string,searchId:string}|null>(null)
+function researchFromPaper(sourceId:string,searchId:string){paperSearchScope.value={sourceId,searchId};sourceSelectionMode.value='selected';selectedSourceIds.value=[sourceId];question.value='';openAskTab()}
+const paperReadyIds=computed(()=>sources.value.filter(s=>sourceGroup(s)==='ready').map(s=>s.id))
+async function reviewPaper(sourceId:string){await pollSources();const source=sources.value.find(s=>s.id===sourceId);if(source)await chooseSource(source);else tab.value='sources'}
 const referenceRemedy=ref('')
 function openMateriaMedica(remedyId=''){referenceRemedy.value=remedyId;tab.value='materia-medica'}
-function researchFromReference(sourceId:string,remedyName:string){sourceSelectionMode.value='selected';selectedSourceIds.value=[sourceId];selectedLiteratureCategories.value=['materia_medica'];question.value=`What does this source report about ${remedyName}?`;answer.value='';answerStatus.value='';citation.value=null;citations.value=[];sections.value=[];evidence.value=[];searches.value=[];claimChecks.value=[];omittedClaims.value=0;answerCategoryScope.value=[];currentJobID.value='';openAskTab()}
+function researchFromReference(sourceId:string,remedyName:string){paperSearchScope.value=null;sourceSelectionMode.value='selected';selectedSourceIds.value=[sourceId];selectedLiteratureCategories.value=['materia_medica'];question.value=`What does this source report about ${remedyName}?`;answer.value='';answerStatus.value='';citation.value=null;citations.value=[];sections.value=[];evidence.value=[];searches.value=[];claimChecks.value=[];omittedClaims.value=0;answerCategoryScope.value=[];currentJobID.value='';openAskTab()}
 const intakeOpen=ref(false),intakeMethod=ref<'upload'|'document'|'link'|'collection'|'archive'|'doi'>('upload')
 const sourcesLoading=ref(true),uploadDragging=ref(false),uploadInput=ref<HTMLInputElement|null>(null)
 const intakeSuccess=ref(''),lastImportedSource=ref('')
@@ -33,7 +38,7 @@ const showIndividualBlocks=ref(false),showExcludedBlocks=ref(false)
 const visibleDocumentBlocks=computed(()=>showIndividualBlocks.value?documentBlocks.value.filter(block=>showExcludedBlocks.value||block.review_status!=='excluded'):[])
 const documentReviewChanged=computed(()=>!!documentTextReview.value&&documentReviewText.value!==documentTextReview.value.plain_text)
 const literatureOptions=['materia_medica','repertory','organon_philosophy','therapeutics','provings','clinical_cases','research','other','unclassified']
-const evidenceOptions=['unknown','classical_reference','published_case','trial_study','systematic_review','trial_registration','guideline_safety','other']
+const evidenceOptions=['unknown','classical_reference','published_case','trial_study','observational_study','study_protocol','systematic_review','trial_registration','guideline_safety','other']
 const selectedLiteratureCategories=ref<string[]>([]),reviewLiteratureCategories=ref<string[]>(['unclassified']),reviewEvidenceCategory=ref('unknown'),categoryReason=ref(''),sectionCategories=ref<Record<string,string[]>>({}),sectionCategoryReasons=ref<Record<string,string>>({})
 const pageNote=ref(''),pageOutcome=ref(''),showOmitted=ref(false),needsAttention=ref(false),rightsNote=ref(''),rightsDecision=ref('')
 const pageNoteRequired=computed(()=>pageOutcome.value!=='blank'&&pageOutcome.value!=='book_info')
@@ -112,7 +117,9 @@ const omittedClaims=ref(0)
 type AnswerJob={id:string,question:string,research_mode:string,status:string,stage:string,attempts:number,answer_id:string|null,error_code:string|null,error_message:string|null,created_at:string,updated_at:string}
 type EvaluationReport={job_id:string,question_raw:string,answer:string,answer_status:string,job_status:string,stage:string,attempts:number,owner:string,research_mode:string,selected_source_ids:string[],created_at:string,finished_at:string|null,answer_model:string,answer_revision:string,prompt_revision:string,embedding_model:string,embedding_revision:string,metrics:{search_count:number,retrieved_passages_across_searches:number,selected_candidate_count:number,cited_passage_count:number,citation_coverage:number,supported_claim_count:number,rejected_claim_count:number,top_retrieval_score:number,mean_retrieval_score:number},searches:{ordinal:number,query:string,scope:string,candidate_count:number}[],candidates:{rank:number,score:number,chunk_id:string,title:string,author:string,scan:number,printed_page:string,preview:string,cited:boolean}[],claims:{ordinal:number,claim:string,decision:string,check_method:string}[],logs:{attempt:number,stage:string,detail:Record<string,unknown>,duration_ms:number|null,created_at:string}[],model_calls:{kind:string,provider:string,requested_model:string,returned_model:string,request_id:string,outcome:string,prompt_tokens:number|null,completion_tokens:number|null,total_tokens:number|null,reasoning_tokens:number|null,estimated_cost_usd:number|null,cost_origin:string,duration_ms:number,created_at:string}[],model_usage_summary:{call_count:number,known_estimated_cost_usd:number,unknown_cost_call_count:number}}
 type SourceJob={id:string,source_id:string,title:string,kind:string,status:string,stage:string,completed:number,total:number,attempts:number,error:string|null,updated_at:string}
-type SavedAnswer={answer_id:string,question?:string,answer:string,status:string,citations:AnswerCitation[],searches?:SearchRecord[],evidence?:EvidenceRecord[],sections?:ResearchSection[],omitted_claim_count?:number,literature_categories?:string[]}
+type SavedAnswer={answer_id:string,question?:string,answer:string,status:string,citations:AnswerCitation[],searches?:SearchRecord[],evidence?:EvidenceRecord[],sections?:ResearchSection[],omitted_claim_count?:number,literature_categories?:string[],paper_search?:{id:string,query:string,providers:string[],state:string,cap:number,searched_at:string}|null,affected_sources?:{title:string,status:string,notice_type:string,notice_url:string}[]}
+const answerPaperSearch=ref<SavedAnswer['paper_search']>(null)
+const answerAffectedSources=ref<NonNullable<SavedAnswer['affected_sources']>>([])
 type ClaimCheck={ordinal:number,claim:string,decision:string,check_method:string,supports:{label:string,excerpt:string,excerpt_start:number,excerpt_end:number}[]}
 const answerJobs=ref<AnswerJob[]>([]),sourceJobs=ref<SourceJob[]>([]),activityPage=ref(1),unreadActivity=ref(0),currentJobID=ref('')
 const questionJob=computed(()=>answerJobs.value.find(job=>job.id===currentJobID.value)||(question.value.trim()?answerJobs.value.find(job=>job.question===question.value.trim()):answerJobs.value[0]))
@@ -559,9 +566,11 @@ function purgeSource(source:Source,confirmation:string){run(async()=>{
 })}
 function retryFileCleanup(){run(async()=>{await api('/source-file-cleanup/retry',{method:'POST'})})}
 function removeSource(source:Source,reason:string){run(async()=>{await api(`/sources/${source.id}`,{method:'DELETE',body:JSON.stringify({reason})});selectedSourceIds.value=selectedSourceIds.value.filter(id=>id!==source.id);if(active.value?.id===source.id){active.value=null;detail.value=null;tab.value='sources'}})}
-function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='selected'&&asksAboutSelectedSource.value&&selectedSourceIds.value.length!==1)selectedSourceIds.value=[]}
+function setSourceSelectionMode(mode:'all'|'selected'){sourceSelectionMode.value=mode;if(mode==='all')paperSearchScope.value=null;if(mode==='selected'&&asksAboutSelectedSource.value&&selectedSourceIds.value.length!==1)selectedSourceIds.value=[]}
 function showAnswer(result:SavedAnswer,openAsk=true){
  answer.value=result.answer;answerStatus.value=result.status;citations.value=result.citations;searches.value=result.searches||[];evidence.value=result.evidence||[];sections.value=result.sections||[];omittedClaims.value=result.omitted_claim_count||0
+ answerPaperSearch.value=result.paper_search||null
+ answerAffectedSources.value=result.affected_sources||[]
  answerCategoryScope.value=result.literature_categories||[]
  claimChecks.value=[];api<{claims:ClaimCheck[]}>(`/research/answers/${result.answer_id}/claims`).then(data=>{claimChecks.value=data.claims}).catch(()=>{})
  if(result.question)question.value=result.question
@@ -577,19 +586,20 @@ async function refreshActivity(){
  }catch(e){connectionError.value='Connection lost. Progress may be out of date. We’ll reconnect automatically.'}
 }
 function ask(){if(!validQuestion.value||!selectionValid.value)return;run(async()=>{
- answer.value='';answerStatus.value='';citations.value=[];citation.value=null;searches.value=[];evidence.value=[];sections.value=[];omittedClaims.value=0
- const result=await api<{job_id:string}>('/research/answer-jobs',{method:'POST',body:JSON.stringify({question:question.value,mode:researchMode.value,source_ids:sourceSelectionMode.value==='selected'?selectedSourceIds.value:[],literature_categories:selectedLiteratureCategories.value})})
+ answer.value='';answerStatus.value='';answerPaperSearch.value=null;answerAffectedSources.value=[];citations.value=[];citation.value=null;searches.value=[];evidence.value=[];sections.value=[];omittedClaims.value=0
+ const paperSearchId=sourceSelectionMode.value==='selected'?paperSearchScope.value?.searchId:null
+ const result=await api<{job_id:string}>('/research/answer-jobs',{method:'POST',body:JSON.stringify({question:question.value,mode:researchMode.value,source_ids:sourceSelectionMode.value==='selected'?selectedSourceIds.value:[],literature_categories:selectedLiteratureCategories.value,paper_search_id:paperSearchId})})
  currentJobID.value=result.job_id;await refreshActivity()
 })}
 function openAnswerJob(job:AnswerJob){if(!job.answer_id)return;run(async()=>{showAnswer(await api<SavedAnswer>(`/research/answers/${job.answer_id}`));await api(`/activity/${job.id}/read`,{method:'POST'});await refreshActivity()})}
 function openEvaluation(job:AnswerJob){run(async()=>{evaluationReport.value=await api<EvaluationReport>(`/admin/answer-jobs/${job.id}/evaluation`)})}
 function downloadEvaluation(){if(!evaluationReport.value)return;const data=new Blob([JSON.stringify(evaluationReport.value,null,2)],{type:'application/json'});const url=URL.createObjectURL(data);const link=document.createElement('a');link.href=url;link.download=`answer-evaluation-${evaluationReport.value.job_id}.json`;link.click();URL.revokeObjectURL(url)}
 function retryAnswerJob(job:AnswerJob){run(async()=>{await api(`/research/answer-jobs/${job.id}/retry`,{method:'POST'});currentJobID.value=job.id;await refreshActivity()})}
-function reviseAnswerJob(job:AnswerJob){question.value=job.question;sourceSelectionMode.value='all';selectedSourceIds.value=[];tab.value='ask';nextTick(()=>window.scrollTo({top:0,behavior:'instant'}))}
+function reviseAnswerJob(job:AnswerJob){question.value=job.question;sourceSelectionMode.value='all';paperSearchScope.value=null;selectedSourceIds.value=[];tab.value='ask';nextTick(()=>window.scrollTo({top:0,behavior:'instant'}))}
 function openSourceJob(job:SourceJob){const source=sources.value.find(s=>s.id===job.source_id);if(source)chooseSource(source);run(async()=>{await api(`/activity/${job.id}/read`,{method:'POST'});await refreshActivity()})}
 function changeActivityPage(delta:number){activityPage.value=Math.max(1,activityPage.value+delta);refreshActivity()}
 function openAskTab(){tab.value='ask';activityPage.value=1;void refreshActivity()}
-function askAboutSource(){if(!active.value||sourceGroup(active.value)!=='ready')return;sourceSelectionMode.value='selected';selectedSourceIds.value=[active.value.id];openAskTab()}
+function askAboutSource(){if(!active.value||sourceGroup(active.value)!=='ready')return;paperSearchScope.value=null;sourceSelectionMode.value='selected';selectedSourceIds.value=[active.value.id];openAskTab()}
 function openActivityTab(){tab.value='activity';activityPage.value=1;void refreshActivity()}
 function showCitation(id:string){run(async()=>{citation.value=await api<Citation>('/citations/'+id)})}
 async function pollSources(){
@@ -710,6 +720,7 @@ onUnmounted(()=>{
         <strong>Source research</strong>
         <nav aria-label="Main">
           <button :class="{ selected: tab === 'ask' }" @click="openAskTab">Ask</button
+          ><button :class="{ selected: tab === 'papers' }" @click="tab = 'papers'">Find papers</button
           ><button :class="{ selected: tab === 'sources' }" @click="tab = 'sources'">
             Sources</button
           ><button :class="{ selected: tab === 'review' }" @click="tab = 'review'">
@@ -737,7 +748,8 @@ onUnmounted(()=>{
         {{ actionError }} <button @click="actionError = ''">Dismiss</button>
       </p>
 
-      <section v-if="tab === 'sources'" class="sources-workspace">
+      <FindPapers v-if="tab === 'papers'" :admin="session.role === 'admin'" :ready-ids="paperReadyIds" @review="reviewPaper" @research="researchFromPaper" />
+      <section v-else-if="tab === 'sources'" class="sources-workspace">
         <div class="sources-heading">
           <div>
             <p class="eyebrow">KNOWLEDGE BASE</p>
@@ -1487,12 +1499,17 @@ onUnmounted(()=>{
               Current:
               {{ detail.literature_categories.join(", ").replaceAll("_", " ") }} ·
               {{ detail.literature_category_origin }}. Evidence category:
-              {{ detail.evidence_category.replaceAll("_", " ") }}. Format:
+              {{ detail.evidence_category.replaceAll("_", " ") }} ({{ detail.evidence_category_origin }}). Format:
               {{ detail.document_format.toUpperCase() }}.
             </p>
             <p v-if="detail.classification_state">
               Automatically detected ({{ detail.classifier_version }}):
               {{ detail.classification_state }} · {{ detail.classification_reason }}
+            </p>
+            <p v-if="detail.evidence_classification_state">
+              Evidence type detected ({{ detail.evidence_classifier_version }}):
+              {{ detail.suggested_evidence_category.replaceAll("_", " ") }} ·
+              {{ detail.evidence_classification_state }} · {{ detail.evidence_classification_reason }}
             </p>
             <p v-else>
               No content classification is recorded for this revision. Existing sources
@@ -2591,6 +2608,8 @@ onUnmounted(()=>{
                 : "Answer from your sources"
             }}
           </h2>
+          <p v-if="answerPaperSearch">Paper discovery: {{ answerPaperSearch.providers.join(', ') }} · “{{ answerPaperSearch.query }}” · {{ answerPaperSearch.searched_at }} · {{ answerPaperSearch.state }} snapshot, cap {{ answerPaperSearch.cap }}. This describes the selected search, not all published literature.</p>
+          <p v-for="item in answerAffectedSources" :key="item.title+item.notice_url" class="verification-note">Saved answer used {{ item.title }}; current source status: {{ item.status }}. {{ item.notice_type ? 'Recorded '+item.notice_type.replaceAll('_',' ')+' notice.' : 'Review source eligibility before reusing this answer.' }} <a v-if="item.notice_url" :href="item.notice_url" target="_blank" rel="noopener noreferrer">Read notice</a></p>
           <p>
             Literature scope:
             {{

@@ -227,6 +227,19 @@ func (s *Store) ImportPDF(ctx context.Context, input io.Reader, title, author, e
 
 // ImportPDFWithOrigin also records the exact remote PDF URL used for acquisition.
 func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL string, categories ...IntakeCategory) (uuid.UUID, error) {
+	return s.importPDFWithOrigin(ctx, input, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL, nil, categories...)
+}
+
+// ImportPDFWithOriginID gives a durable acquisition worker a stable source ID.
+// A retry can find an already committed source after a crash before job linkage.
+func (s *Store) ImportPDFWithOriginID(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL string, sourceID uuid.UUID, categories ...IntakeCategory) (uuid.UUID, error) {
+	if sourceID == uuid.Nil {
+		return uuid.Nil, errors.New("source ID is required")
+	}
+	return s.importPDFWithOrigin(ctx, input, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL, &sourceID, categories...)
+}
+
+func (s *Store) importPDFWithOrigin(ctx context.Context, input io.Reader, title, author, edition, publication, repository, sourceURL, rightsStatement, pdfOriginURL string, requestedID *uuid.UUID, categories ...IntakeCategory) (uuid.UUID, error) {
 	if sourceURL != "" {
 		u, err := url.Parse(sourceURL)
 		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
@@ -321,6 +334,9 @@ func (s *Store) ImportPDFWithOrigin(ctx context.Context, input io.Reader, title,
 		return uuid.Nil, err
 	}
 	id := uuid.New()
+	if requestedID != nil {
+		id = *requestedID
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO sources(id,source_key,title,author,source_url,pdf_path,pdf_sha256,pdf_bytes,page_count,status,edition,publication_info,repository,rights_statement,pdf_origin_url)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',$10,$11,$12,$13,$14)`, id, "upload-"+id.String(), strings.TrimSpace(title), strings.TrimSpace(author), strings.TrimSpace(sourceURL), stored, sha, n, count+1, strings.TrimSpace(edition), strings.TrimSpace(publication), strings.TrimSpace(repository), strings.TrimSpace(rightsStatement), strings.TrimSpace(pdfOriginURL))
 	if err != nil {
