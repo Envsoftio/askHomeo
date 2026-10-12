@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// A single plain editor uses the same exact-substring rules as linked-book
-// review. The saved original blocks and byte offsets remain immutable.
+// Review exposes document structure while keeping block IDs and raw offsets
+// internal to the editor. The saved original remains immutable.
 func (a *API) documentReviewText(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, r) {
 		return
@@ -26,18 +26,33 @@ func (a *API) documentReviewText(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err.Error())
 		return
 	}
-	text := renderDocumentReview(blocks)
+	text := renderMarkdownDocumentReview(blocks)
 	if len(text) > maxCollectionReviewBytes {
 		fail(w, 409, "document text exceeds the editor limit")
 		return
 	}
 	pending := 0
+	type reviewBlock struct {
+		ID       uuid.UUID `json:"id"`
+		Kind     string    `json:"kind"`
+		Heading  string    `json:"heading"`
+		Text     string    `json:"text"`
+		Original string    `json:"original"`
+		Status   string    `json:"status"`
+	}
+	reviewBlocks := make([]reviewBlock, 0, len(blocks))
 	for _, block := range blocks {
 		if block.status == "pending" {
 			pending++
 		}
+		text, _ := normalizeEditorLines(block.reviewed)
+		original, _ := normalizeEditorLines(block.original)
+		if block.status == "excluded" {
+			text = ""
+		}
+		reviewBlocks = append(reviewBlocks, reviewBlock{block.id, block.kind, block.heading, text, original, block.status})
 	}
-	write(w, 200, map[string]any{"revision_id": revision, "review_hash": documentReviewHash(blocks), "plain_text": text, "blocks": len(blocks), "pending_blocks": pending})
+	write(w, 200, map[string]any{"revision_id": revision, "review_hash": documentReviewHash(blocks), "markdown_text": text, "review_blocks": reviewBlocks, "blocks": len(blocks), "pending_blocks": pending})
 }
 
 func documentReviewHash(blocks []collectionReviewBlock) string {
@@ -59,7 +74,7 @@ func (a *API) readDocumentReview(r *http.Request, id uuid.UUID) (uuid.UUID, []co
 	if err := a.Store.DB.QueryRow(r.Context(), query, id).Scan(&revision); err != nil {
 		return uuid.Nil, nil, errors.New("document is not available for text review")
 	}
-	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,block_index,original_text,reviewed_text,review_status FROM document_blocks WHERE processing_revision_id=$1 ORDER BY block_index`, revision)
+	rows, err := a.Store.DB.Query(r.Context(), `SELECT id,block_index,original_text,reviewed_text,review_status,kind,heading FROM document_blocks WHERE processing_revision_id=$1 ORDER BY block_index`, revision)
 	if err != nil {
 		return uuid.Nil, nil, err
 	}
@@ -67,7 +82,7 @@ func (a *API) readDocumentReview(r *http.Request, id uuid.UUID) (uuid.UUID, []co
 	blocks := []collectionReviewBlock{}
 	for rows.Next() {
 		var block collectionReviewBlock
-		if err = rows.Scan(&block.id, &block.index, &block.original, &block.reviewed, &block.status); err != nil {
+		if err = rows.Scan(&block.id, &block.index, &block.original, &block.reviewed, &block.status, &block.kind, &block.heading); err != nil {
 			return uuid.Nil, nil, err
 		}
 		blocks = append(blocks, block)
@@ -143,11 +158,12 @@ func (a *API) saveDocumentReviewText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		RevisionID uuid.UUID `json:"revision_id"`
-		ReviewHash string    `json:"review_hash"`
-		PlainText  string    `json:"plain_text"`
+		RevisionID   uuid.UUID            `json:"revision_id"`
+		ReviewHash   string               `json:"review_hash"`
+		MarkdownText string               `json:"markdown_text"`
+		Edits        []documentReviewEdit `json:"edits"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCollectionReviewBytes+4096)).Decode(&body); err != nil || body.RevisionID == uuid.Nil || len(body.ReviewHash) != 64 || len(body.PlainText) > maxCollectionReviewBytes {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxCollectionReviewBytes+4096)).Decode(&body); err != nil || body.RevisionID == uuid.Nil || len(body.ReviewHash) != 64 || len(body.MarkdownText) > maxCollectionReviewBytes || (body.Edits == nil && body.MarkdownText == "") {
 		fail(w, 400, "invalid document review text")
 		return
 	}
@@ -164,7 +180,7 @@ func (a *API) saveDocumentReviewText(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "document changed; reload the text editor")
 		return
 	}
-	rows, err := tx.Query(ctx, `SELECT id,block_index,original_text,reviewed_text,review_status FROM document_blocks WHERE processing_revision_id=$1 ORDER BY block_index`, revision)
+	rows, err := tx.Query(ctx, `SELECT id,block_index,original_text,reviewed_text,review_status,kind,heading FROM document_blocks WHERE processing_revision_id=$1 ORDER BY block_index`, revision)
 	if err != nil {
 		fail(w, 500, "could not read document blocks")
 		return
@@ -172,7 +188,7 @@ func (a *API) saveDocumentReviewText(w http.ResponseWriter, r *http.Request) {
 	blocks := []collectionReviewBlock{}
 	for rows.Next() {
 		var block collectionReviewBlock
-		if err = rows.Scan(&block.id, &block.index, &block.original, &block.reviewed, &block.status); err != nil {
+		if err = rows.Scan(&block.id, &block.index, &block.original, &block.reviewed, &block.status, &block.kind, &block.heading); err != nil {
 			break
 		}
 		blocks = append(blocks, block)
@@ -189,7 +205,12 @@ func (a *API) saveDocumentReviewText(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "document review changed; reload the text editor")
 		return
 	}
-	selected, err := matchDocumentText(body.PlainText, blocks)
+	var selected []string
+	if body.Edits != nil {
+		selected, err = matchDocumentReviewEdits(body.Edits, blocks)
+	} else {
+		selected, err = matchMarkdownDocumentReview(body.MarkdownText, blocks)
+	}
 	if err != nil {
 		fail(w, 400, err.Error())
 		return

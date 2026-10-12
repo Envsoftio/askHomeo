@@ -51,7 +51,7 @@ func (s *Store) CleanupDeletedFile(ctx context.Context) error {
 		return err
 	}
 	var shared bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM source_assets WHERE sha256=$1 AND kind=$2) OR EXISTS(SELECT 1 FROM collection_items WHERE sha256=$1 AND format=$2)`, sha, kind).Scan(&shared)
+	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM source_assets WHERE sha256=$1 AND kind=$2) OR EXISTS(SELECT 1 FROM collection_items WHERE sha256=$1 AND format=$2) OR EXISTS(SELECT 1 FROM document_figure_images WHERE sha256=$1 AND (CASE WHEN media_type='image/png' THEN 'figure_png' ELSE 'figure_jpg' END)=$2)`, sha, kind).Scan(&shared)
 	if err != nil {
 		return err
 	}
@@ -77,7 +77,7 @@ func (s *Store) CleanupDeletedFile(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 func (s *Store) deleteManagedAsset(ctx context.Context, kind, sha, locator string) error {
-	if !pdfHash.MatchString(sha) || (kind != "pdf" && kind != "html" && kind != "txt") {
+	if !pdfHash.MatchString(sha) || (kind != "pdf" && kind != "html" && kind != "txt" && kind != "xml" && kind != "jats" && kind != "figure_png" && kind != "figure_jpg") {
 		return errors.New("invalid asset identity")
 	}
 	if kind == "pdf" && s.PDFObjects != nil {
@@ -94,6 +94,12 @@ func (s *Store) deleteManagedAsset(ctx context.Context, kind, sha, locator strin
 		}
 	}
 	relative := filepath.Join("data/runtime/assets", sha+"."+kind)
+	if kind == "figure_png" {
+		relative = filepath.Join("data/runtime/assets/figures", sha+".png")
+	}
+	if kind == "figure_jpg" {
+		relative = filepath.Join("data/runtime/assets/figures", sha+".jpg")
+	}
 	path := filepath.Join(s.Root, relative)
 	// Only unlink the content-addressed managed copy, never arbitrary supplied paths.
 	if kind != "pdf" && filepath.Clean(locator) != relative && filepath.Clean(locator) != filepath.Clean(path) {

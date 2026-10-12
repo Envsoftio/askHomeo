@@ -29,6 +29,7 @@ form{grid-template-columns:minmax(0,1fr)}form>*{min-width:0}input[type=file]{dis
 /* Keep the repair editor reachable when a whole book needs verification. */
 .source-review-workspace .page-list{max-height:22rem;overflow-y:auto;padding:.25rem;align-content:start}
 .book-review{margin-top:1rem}.book-review-editor{display:block;width:100%;min-height:36rem;resize:vertical;white-space:pre-wrap;font:0.92rem/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}
+.document-markdown-pages{max-height:60rem;overflow:auto;margin:1rem 0;padding:1.5rem;background:#fff;border:1px solid #d9dedb;border-radius:8px}.document-markdown-block{max-width:80ch;margin:0 auto;padding:.65rem 0;border-bottom:1px solid #edf0ed}.document-markdown-block h4{font:600 1.2rem/1.35 Georgia,serif;margin:.4rem 0}.document-markdown-paragraph{white-space:pre-wrap;font:1rem/1.65 Georgia,serif;margin:.4rem 0}.document-markdown-actions{display:flex;gap:.45rem;flex-wrap:wrap;margin-top:.35rem;opacity:.8}.document-markdown-edit{display:block;margin-top:.7rem}.document-markdown-edit textarea{display:block;width:100%;min-height:8rem;resize:vertical;font:0.95rem/1.5 ui-monospace,SFMono-Regular,Consolas,monospace}.document-markdown-table{overflow-x:auto}.document-markdown-table table{border-collapse:collapse}.document-markdown-table td{border:1px solid #a9b7af;padding:.35rem .6rem;white-space:pre-wrap}
 
 .reference-navigation{display:inline-flex;align-items:center;gap:.25rem;flex-wrap:wrap;border-left:1px solid #d9e0d9;padding-left:.6rem}.reference-navigation small{color:#65766b;margin-right:.25rem}
 

@@ -19,6 +19,7 @@ type collectionReviewBlock struct {
 	id                         uuid.UUID
 	index                      int
 	original, reviewed, status string
+	kind, heading              string
 }
 
 type collectionReviewSource struct {

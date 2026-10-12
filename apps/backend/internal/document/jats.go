@@ -13,7 +13,7 @@ import (
 
 // JATSVersion changes whenever the element-to-block mapping changes. Byte
 // offsets below address the immutable UTF-8 XML asset, not decoded characters.
-const JATSVersion = "jats-v2"
+const JATSVersion = "jats-v3"
 
 var jatsSpace = regexp.MustCompile(`\s+`)
 var jatsDoctype = regexp.MustCompile(`(?is)<!DOCTYPE\s+article\s*(?:SYSTEM\s+"[^"]*"|PUBLIC\s+"[^"]*"\s+"[^"]*")?\s*>`)
@@ -23,6 +23,7 @@ type jatsFrame struct {
 	start              int
 	text               strings.Builder
 	inRefs             bool
+	imageRef           string
 }
 
 func isJATS(raw []byte, contentType string) bool {
@@ -94,6 +95,8 @@ func ExtractJATS(raw []byte) (Result, error) {
 			kind = "footnote"
 		case "table":
 			kind = "table"
+		case "fig":
+			kind = "figure"
 		}
 		value := strings.TrimSpace(jatsSpace.ReplaceAllString(f.text.String(), " "))
 		if kind == "table" {
@@ -110,7 +113,7 @@ func ExtractJATS(raw []byte) (Result, error) {
 			}
 			value = strings.Join(lines, "\n")
 		}
-		if value == "" {
+		if value == "" && kind != "figure" {
 			return
 		}
 		counter++
@@ -125,6 +128,10 @@ func ExtractJATS(raw []byte) (Result, error) {
 		block := Block{Key: key, Kind: kind, Heading: heading, Text: value, StartByte: originalOffset(f.start), EndByte: originalOffset(end)}
 		if kind == "reference" {
 			block.ExclusionReason = "bibliographic reference, not article findings"
+		}
+		if kind == "figure" {
+			block.Text = strings.TrimSpace(value + " [image reference: " + f.imageRef + "]")
+			block.ExclusionReason = "figure image requires separate asset and visual review"
 		}
 		out.Blocks = append(out.Blocks, block)
 	}
@@ -144,6 +151,19 @@ func ExtractJATS(raw []byte) (Result, error) {
 		case xml.StartElement:
 			if t.Name.Local == "graphic" || t.Name.Local == "inline-graphic" || t.Name.Local == "supplementary-material" || t.Name.Local == "disp-formula" {
 				out.Warnings = append(out.Warnings, "Unextracted "+t.Name.Local+" requires separate review")
+			}
+			if t.Name.Local == "graphic" || t.Name.Local == "inline-graphic" {
+				for i := len(stack) - 1; i >= 0; i-- {
+					if stack[i].name == "fig" {
+						for _, attr := range t.Attr {
+							if attr.Name.Local == "href" {
+								stack[i].imageRef = attr.Value
+								break
+							}
+						}
+						break
+					}
+				}
 			}
 			if len(stack) >= 64 {
 				return Result{}, errors.New("JATS nesting exceeds 64 elements")
@@ -192,9 +212,12 @@ func ExtractJATS(raw []byte) (Result, error) {
 				return Result{}, errors.New("JATS closing element differs")
 			}
 			switch f.name {
-			case "article-title", "title", "p", "list-item", "caption", "table-wrap-foot", "ref", "ack", "funding-group", "fn", "table":
+			case "article-title", "title", "p", "list-item", "caption", "table-wrap-foot", "ref", "ack", "funding-group", "fn", "table", "fig":
 				// A table is retained as one context block, including its headers and
 				// footnotes. Its child paragraphs are not separately treated as findings.
+				if f.name == "fig" && f.imageRef == "" {
+					break
+				}
 				if f.name != "p" || !hasAncestor(stack, "table") {
 					emit(f, after)
 				}

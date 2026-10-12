@@ -32,11 +32,16 @@ const doiNotice=ref(''),lastDOIID=ref('')
 const archiveQuery=ref(''),archiveResults=ref<ArchiveWork[]>([]),archiveItem=ref<ArchiveItem|null>(null),archivePage=ref(1),archiveTotal=ref(0),archiveNotice=ref('')
 const pages=ref<Page[]>([]),pageOffset=ref(0),scanNumber=ref(1),selectedPage=ref<Page|null>(null)
 const documentFile=ref<File|null>(null),documentCharset=ref(''),intakeLiteratureCategory=ref(''),documentBlocks=ref<DocumentBlock[]>([]),blockTexts=ref<Record<string,string>>({}),blockNotes=ref<Record<string,string>>({})
-type DocumentTextReview={revision_id:string,review_hash:string,plain_text:string,blocks:number,pending_blocks:number}
-const documentTextReview=ref<DocumentTextReview|null>(null),documentReviewText=ref(''),documentReviewBusy=ref(false),documentReviewNotice=ref('')
+type ReviewBlock={id:string,kind:string,heading:string,text:string,original:string,status:string}
+type DocumentTextReview={revision_id:string,review_hash:string,review_blocks:ReviewBlock[],blocks:number,pending_blocks:number}
+type FigureImage={block_id:string,has_image:boolean,origin_note:string,image_url:string}
+const documentTextReview=ref<DocumentTextReview|null>(null),documentReviewEdits=ref<Record<string,string>>({}),editingReviewBlock=ref(''),showExcludedReview=ref(false),documentReviewBusy=ref(false),documentReviewNotice=ref('')
+const figureImages=ref<FigureImage[]>([]),figureOriginNotes=ref<Record<string,string>>({})
 const showIndividualBlocks=ref(false),showExcludedBlocks=ref(false)
 const visibleDocumentBlocks=computed(()=>showIndividualBlocks.value?documentBlocks.value.filter(block=>showExcludedBlocks.value||block.review_status!=='excluded'):[])
-const documentReviewChanged=computed(()=>!!documentTextReview.value&&documentReviewText.value!==documentTextReview.value.plain_text)
+const documentReviewChanged=computed(()=>!!documentTextReview.value&&documentTextReview.value.review_blocks.some(block=>documentReviewEdits.value[block.id]!==block.text))
+const visibleReviewBlocks=computed(()=>documentTextReview.value?.review_blocks.filter(block=>showExcludedReview.value||!!documentReviewEdits.value[block.id])||[])
+function reviewTableRows(text:string){return text.split('\n').filter(Boolean).map(row=>row.split(' | '))}
 const literatureOptions=['materia_medica','repertory','organon_philosophy','therapeutics','provings','clinical_cases','research','other','unclassified']
 const evidenceOptions=['unknown','classical_reference','published_case','trial_study','observational_study','study_protocol','systematic_review','trial_registration','guideline_safety','other']
 const selectedLiteratureCategories=ref<string[]>([]),reviewLiteratureCategories=ref<string[]>(['unclassified']),reviewEvidenceCategory=ref('unknown'),categoryReason=ref(''),sectionCategories=ref<Record<string,string[]>>({}),sectionCategoryReasons=ref<Record<string,string>>({})
@@ -496,11 +501,19 @@ function uploadDocument(){if(!documentFile.value)return;run(async()=>{
  const result=await api<{source_id:string,title:string}>('/sources/upload-document',{method:'POST',body:form})
  documentFile.value=null;uploadTitle.value='';uploadAuthor.value='';uploadEdition.value='';uploadPublication.value='';uploadRepository.value='';uploadURL.value='';uploadRights.value='';intakeLiteratureCategory.value='';await importedSource(result)
 })}
-async function loadDocumentBlocks(){if(!active.value)return;try{documentBlocks.value=await api<DocumentBlock[]>(`/sources/${active.value.id}/blocks`);blockTexts.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,b.review_status==='excluded'?'':b.reviewed_text]));sectionCategories.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,[...b.literature_categories]]));connectionError.value=''}catch(e){connectionError.value=e instanceof Error?e.message:'Could not load document blocks.'}}
+async function loadDocumentBlocks(){if(!active.value)return;try{documentBlocks.value=await api<DocumentBlock[]>(`/sources/${active.value.id}/blocks`);blockTexts.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,b.review_status==='excluded'?'':b.reviewed_text]));sectionCategories.value=Object.fromEntries(documentBlocks.value.map(b=>[b.id,[...b.literature_categories]]));figureImages.value=active.value.document_format==='jats'?await api<FigureImage[]>(`/sources/${active.value.id}/figures`):[];connectionError.value=''}catch(e){connectionError.value=e instanceof Error?e.message:'Could not load document blocks.'}}
+async function uploadFigureImage(blockId:string,event:Event){
+ const file=(event.target as HTMLInputElement).files?.[0];if(!active.value||!file)return
+ const note=(figureOriginNotes.value[blockId]||'').trim();if(!note){documentReviewNotice.value='Record the figure image source before upload.';return}
+ documentReviewBusy.value=true;documentReviewNotice.value=''
+ try{const form=new FormData();form.set('file',file);form.set('origin_note',note);await api(`/sources/${active.value.id}/figures/${blockId}/image`,{method:'POST',body:form});await loadDocumentBlocks();documentReviewNotice.value='Figure image saved for visual review. It is not indexed as text evidence.'}
+ catch(e){documentReviewNotice.value=e instanceof Error?e.message:'Could not save figure image.'}
+ finally{documentReviewBusy.value=false}
+}
 async function openDocumentTextReview(){
  if(!active.value)return
  documentReviewBusy.value=true;documentReviewNotice.value=''
- try{const review=await api<DocumentTextReview>(`/sources/${active.value.id}/review-text`);documentTextReview.value=review;documentReviewText.value=review.plain_text;await nextTick();document.querySelector<HTMLTextAreaElement>('.document-review-editor')?.focus()}
+ try{const review=await api<DocumentTextReview>(`/sources/${active.value.id}/review-text`);documentTextReview.value=review;documentReviewEdits.value=Object.fromEntries(review.review_blocks.map(block=>[block.id,block.text]));editingReviewBlock.value='';await nextTick();document.querySelector<HTMLElement>('.document-markdown-view')?.scrollIntoView({block:'nearest'})}
  catch(e){documentReviewNotice.value=e instanceof Error?e.message:'Could not open document text review.'}
  finally{documentReviewBusy.value=false}
 }
@@ -508,7 +521,7 @@ async function saveDocumentTextReview(){
  if(!active.value||!documentTextReview.value)return
  documentReviewBusy.value=true;documentReviewNotice.value=''
  try{
-  const result=await api<{retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>(`/sources/${active.value.id}/review-text`,{method:'PUT',body:JSON.stringify({revision_id:documentTextReview.value.revision_id,review_hash:documentTextReview.value.review_hash,plain_text:documentReviewText.value})})
+  const result=await api<{retained_blocks:number,excluded_blocks:number,trimmed_blocks:number}>(`/sources/${active.value.id}/review-text`,{method:'PUT',body:JSON.stringify({revision_id:documentTextReview.value.revision_id,review_hash:documentTextReview.value.review_hash,edits:documentTextReview.value.review_blocks.map(block=>({id:block.id,text:documentReviewEdits.value[block.id]??''}))})})
   await loadDocumentBlocks();await refresh();await openDocumentTextReview()
   documentReviewNotice.value=`Saved: ${result.retained_blocks} retained, ${result.excluded_blocks} excluded, ${result.trimmed_blocks} trimmed. Review rights before publishing.`
  }catch(e){documentReviewNotice.value=e instanceof Error?e.message:'Could not save document text review.'}
@@ -522,7 +535,7 @@ function saveLiteratureCategories(origin:'accepted_suggestion'|'manual'){if(!act
 function retryClassification(){if(!active.value)return;run(async()=>{await api(`/sources/${active.value!.id}/categories/retry`,{method:'POST'})})}
 function saveSectionCategories(block:DocumentBlock){run(async()=>{await api(`/document-blocks/${block.id}/categories`,{method:'PUT',body:JSON.stringify({categories:sectionCategories.value[block.id],rationale:sectionCategoryReasons.value[block.id]||'Reviewed this section against the saved document'})});await loadDocumentBlocks()})}
 async function chooseSource(s:Source){
-	active.value=s;detail.value=null;pages.value=[];documentBlocks.value=[];documentTextReview.value=null;documentReviewText.value='';documentReviewNotice.value='';showIndividualBlocks.value=false;showExcludedBlocks.value=false;rightsDecision.value='';rightsNote.value='';sourceAccessReason.value='';pageOffset.value=0;selectedPage.value=null;tab.value='review'
+	active.value=s;detail.value=null;pages.value=[];documentBlocks.value=[];figureImages.value=[];documentTextReview.value=null;documentReviewEdits.value={};editingReviewBlock.value='';documentReviewNotice.value='';showIndividualBlocks.value=false;showExcludedBlocks.value=false;rightsDecision.value='';rightsNote.value='';sourceAccessReason.value='';pageOffset.value=0;selectedPage.value=null;tab.value='review'
  await refresh()
  const current=detail.value as SourceDetail|null
  if(current){metadata.value={title:current.title,author:current.author,edition:current.edition,publication_info:current.publication_info,repository:current.repository,source_url:current.source_url,rights_statement:current.rights_statement};reviewLiteratureCategories.value=[...current.literature_categories];reviewEvidenceCategory.value=current.evidence_category}
@@ -1625,15 +1638,42 @@ onUnmounted(()=>{
               </form>
             </details>
             <div v-if="active.status === 'review'" class="step">
-              <h3>Review document text in one editor</h3>
-              <p class="input-hint">Remove unwanted paragraphs or trim their ends while keeping retained wording and order. The saved original remains available for citations. Save once to review all blocks; rights and publication are separate steps.</p>
-              <button :disabled="documentReviewBusy || busy || !detail?.document_blocks" @click="openDocumentTextReview">{{ documentReviewBusy ? 'Loading…' : 'Open document text editor' }}</button>
+              <h3>Review document</h3>
+              <p class="input-hint">Read the formatted document, then edit a passage or exclude it. Retained wording must match the saved original; table cells stay intact. Block identifiers are kept internally for citations.</p>
+              <button :disabled="documentReviewBusy || busy || !detail?.document_blocks" @click="openDocumentTextReview">{{ documentReviewBusy ? 'Loading…' : 'Open document viewer and editor' }}</button>
               <p v-if="documentReviewNotice" role="alert">{{ documentReviewNotice }}</p>
-              <div v-if="documentTextReview" class="book-review">
-                <p>{{ documentTextReview.blocks }} blocks · {{ documentTextReview.pending_blocks }} pending review</p>
-                <textarea v-model="documentReviewText" class="book-review-editor document-review-editor" aria-label="Edit whole document text" spellcheck="false" />
+              <div v-if="documentTextReview" class="book-review document-markdown-view">
+                <p>{{ documentTextReview.blocks }} passages · {{ documentTextReview.pending_blocks }} pending review. <a v-if="detail?.processing_revision_id" :href="`/api/v1/sources/${active.id}/document/${detail.processing_revision_id}/reader`" target="_blank" rel="noopener">Open saved original</a></p>
+                <label class="preview-option"><input v-model="showExcludedReview" type="checkbox" /> Show excluded passages</label>
+                <div class="document-markdown-pages">
+                  <section v-for="block in visibleReviewBlocks" :key="block.id" class="document-markdown-block">
+                    <template v-if="documentReviewEdits[block.id]">
+                      <h4 v-if="block.kind==='heading'">{{ documentReviewEdits[block.id] }}</h4>
+                      <div v-else-if="block.kind==='table'" class="document-markdown-table"><p class="input-hint">Extracted cells; verify headers and spans in the saved original.</p><table><tbody><tr v-for="(row,rowIndex) in reviewTableRows(documentReviewEdits[block.id]||'')" :key="rowIndex"><td v-for="(cell,cellIndex) in row" :key="cellIndex">{{ cell }}</td></tr></tbody></table></div>
+                      <ul v-else-if="block.kind==='list'"><li>{{ documentReviewEdits[block.id] }}</li></ul>
+                      <p v-else class="document-markdown-paragraph">{{ documentReviewEdits[block.id] }}</p>
+                    </template>
+                    <p v-else class="input-hint">Excluded {{ block.kind }} passage</p>
+                    <div v-if="block.kind!=='figure' && block.kind!=='reference'" class="document-markdown-actions">
+                      <button v-if="block.kind!=='table'" :disabled="documentReviewBusy" @click="editingReviewBlock=editingReviewBlock===block.id?'':block.id">{{ editingReviewBlock===block.id?'Close editor':'Edit passage' }}</button>
+                      <button v-if="documentReviewEdits[block.id]" :disabled="documentReviewBusy" @click="documentReviewEdits[block.id]=''">Exclude</button>
+                      <button v-if="documentReviewEdits[block.id]!==block.original" :disabled="documentReviewBusy" @click="documentReviewEdits[block.id]=block.original">Restore original</button>
+                    </div>
+                    <label v-if="editingReviewBlock===block.id && block.kind!=='table'" class="document-markdown-edit">Retained source wording<textarea v-model="documentReviewEdits[block.id]" rows="5" spellcheck="false" /></label>
+                  </section>
+                </div>
                 <div class="actions"><button class="primary-button" :disabled="documentReviewBusy || (!documentReviewChanged && documentTextReview.pending_blocks===0)" @click="saveDocumentTextReview">{{ documentReviewBusy ? 'Saving…' : 'Save document text review' }}</button></div>
               </div>
+            </div>
+            <div v-if="active.document_format==='jats' && figureImages.length" class="step">
+              <h3>Review article figures</h3>
+              <p class="input-hint">The article XML names these figures but does not contain their image pixels. Upload the matching PNG or JPEG from the article and record its source. Uploaded figures are visible to administrators for visual review only.</p>
+              <article v-for="figure in figureImages" :key="figure.block_id" class="step">
+                <p>{{ documentBlocks.find(block=>block.id===figure.block_id)?.original_text }}</p>
+                <template v-if="figure.has_image"><img :src="figure.image_url" alt="Saved article figure for visual review" style="max-width:100%;max-height:38rem"/><p>Image source: {{ figure.origin_note }}</p></template>
+                <template v-else-if="active.status==='review'"><label>Image source / provenance<input v-model="figureOriginNotes[figure.block_id]" placeholder="Article URL and figure number" /></label><label>Attach exact figure image<input type="file" accept="image/png,image/jpeg" :disabled="documentReviewBusy" @change="uploadFigureImage(figure.block_id,$event)" /></label></template>
+                <p v-else>Figure image not attached.</p>
+              </article>
             </div>
             <details v-if="active.status === 'review'" class="step" @toggle="showIndividualBlocks=($event.target as HTMLDetailsElement).open">
               <summary>Review individual retained blocks</summary>

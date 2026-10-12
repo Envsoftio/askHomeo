@@ -61,3 +61,23 @@ func TestJATSRejectsEntitiesAndWrongRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestJATSFigureRequiresSeparateImageReview(t *testing.T) {
+	raw := []byte(`<article xmlns:xlink="http://www.w3.org/1999/xlink"><body><fig><label>Fig 1</label><caption><p>Trial flow</p></caption><graphic xlink:href="flow.png"/></fig></body></article>`)
+	out, err := ExtractJATS(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, block := range out.Blocks {
+		if block.Kind == "figure" {
+			found = true
+			if !strings.Contains(block.Text, "flow.png") || block.ExclusionReason == "" {
+				t.Fatalf("figure must retain reference and require review: %+v", block)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("figure was not captured")
+	}
+}

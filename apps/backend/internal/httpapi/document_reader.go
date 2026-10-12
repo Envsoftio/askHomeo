@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -59,7 +61,10 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	decoded, err := document.DecodeOriginal(raw, contentType, charset)
-	if format == "jats" { decoded=string(raw);err=nil }
+	if format == "jats" {
+		decoded = string(raw)
+		err = nil
+	}
 	if err != nil {
 		fail(w, 409, "saved document encoding needs review")
 		return
@@ -73,10 +78,37 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if format == "jats" {
 		parsed, parseErr := document.ExtractJATS(raw)
-		if parseErr != nil { fail(w,409,"saved JATS needs review");return }
+		if parseErr != nil {
+			fail(w, 409, "saved JATS needs review")
+			return
+		}
 		var rendered strings.Builder
-		for _, block := range parsed.Blocks { rendered.WriteString("<section id=\"");rendered.WriteString(html.EscapeString(block.Key));rendered.WriteString("\"><h3>");rendered.WriteString(html.EscapeString(block.Heading));rendered.WriteString("</h3><p>");rendered.WriteString(html.EscapeString(block.Text));rendered.WriteString("</p></section>") }
-		body=rendered.String()
+		for _, block := range parsed.Blocks {
+			rendered.WriteString("<section id=\"")
+			rendered.WriteString(html.EscapeString(block.Key))
+			rendered.WriteString("\"><h3>")
+			rendered.WriteString(html.EscapeString(block.Heading))
+			rendered.WriteString("</h3>")
+			if block.Kind == "table" {
+				table, tableErr := renderJATSOriginalTable(raw[block.StartByte:block.EndByte])
+				if tableErr != nil {
+					rendered.WriteString("<p>Original table structure could not be rendered; verify the saved XML.</p>")
+					rendered.WriteString(renderJATSTable(block.Text))
+				} else {
+					rendered.WriteString(table)
+				}
+			} else if block.Kind == "figure" {
+				rendered.WriteString("<figure><figcaption>")
+				rendered.WriteString(html.EscapeString(block.Text))
+				rendered.WriteString("</figcaption><p>Image not present in saved article XML. Review the linked image asset separately.</p></figure>")
+			} else {
+				rendered.WriteString("<p>")
+				rendered.WriteString(html.EscapeString(block.Text))
+				rendered.WriteString("</p>")
+			}
+			rendered.WriteString("</section>")
+		}
+		body = rendered.String()
 	} else {
 		body = "<pre>" + html.EscapeString(decoded) + "</pre>"
 	}
@@ -106,6 +138,86 @@ func (a *API) documentReader(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-store")
 	_, _ = fmt.Fprint(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>Saved original</title><style>body{max-width:80ch;margin:2rem auto;padding:0 1rem;font:16px/1.6 Georgia,serif;color:#20252a}table{border-collapse:collapse}td,th{border:1px solid #aaa;padding:.3rem}pre{white-space:pre-wrap}a[id]{scroll-margin-top:1rem}</style></head><body>", body, "</body></html>")
+}
+
+func renderJATSTable(value string) string {
+	var out strings.Builder
+	out.WriteString("<p>Extracted cell order; header and span structure unverified:</p>")
+	out.WriteString("<table>")
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out.WriteString("<tr>")
+		for _, cell := range strings.Split(line, " | ") {
+			out.WriteString("<td>")
+			out.WriteString(html.EscapeString(cell))
+			out.WriteString("</td>")
+		}
+		out.WriteString("</tr>")
+	}
+	out.WriteString("</table>")
+	return out.String()
+}
+
+// Render only the table grammar from the immutable JATS byte span. Cell spans
+// and genuine header cells come from XML, not guesses based on row position.
+func renderJATSOriginalTable(raw []byte) (string, error) {
+	dec := xml.NewDecoder(bytes.NewReader(raw))
+	var out strings.Builder
+	depth, cellDepth := 0, 0
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			depth++
+			tag := t.Name.Local
+			switch tag {
+			case "table", "thead", "tbody", "tfoot", "tr", "td", "th":
+				out.WriteString("<" + tag)
+				if tag == "td" || tag == "th" {
+					cellDepth = depth
+					for _, attr := range t.Attr {
+						if attr.Name.Local == "colspan" || attr.Name.Local == "rowspan" {
+							n, e := strconv.Atoi(attr.Value)
+							if e == nil && n >= 1 && n <= 100 {
+								out.WriteString(" " + attr.Name.Local + "=\"" + strconv.Itoa(n) + "\"")
+							}
+						}
+					}
+				}
+				out.WriteString(">")
+			case "break":
+				if cellDepth > 0 {
+					out.WriteString("<br>")
+				}
+			}
+		case xml.CharData:
+			if cellDepth > 0 {
+				out.WriteString(html.EscapeString(string(t)))
+			}
+		case xml.EndElement:
+			tag := t.Name.Local
+			switch tag {
+			case "table", "thead", "tbody", "tfoot", "tr", "td", "th":
+				out.WriteString("</" + tag + ">")
+			}
+			if (tag == "td" || tag == "th") && depth == cellDepth {
+				cellDepth = 0
+			}
+			depth--
+		}
+	}
+	if depth != 0 || !strings.HasPrefix(out.String(), "<table") {
+		return "", fmt.Errorf("invalid JATS table")
+	}
+	return out.String(), nil
 }
 
 // Target offsets are Unicode character offsets in the immutable reviewed block,
