@@ -36,7 +36,9 @@ form{grid-template-columns:minmax(0,1fr)}form>*{min-width:0}input[type=file]{dis
 /* Shared page rhythm and controls */
 .shell{max-width:1240px;padding:clamp(1rem,2.5vw,2rem)}
 header{gap:1.25rem;padding:.35rem 0 1rem;align-items:flex-start}
-header>strong{white-space:nowrap;padding:.55rem 0;color:#204b34;letter-spacing:-.02em}
+.app-logo{display:block;width:210px;max-width:100%;height:auto;flex-shrink:0}
+header>.app-logo{margin:.35rem 0}
+.sign-in-logo{margin-bottom:.5rem}
 nav{align-items:center;justify-content:flex-end;flex-wrap:wrap;row-gap:.6rem}
 nav button{min-height:38px;padding:.45rem .75rem;border-radius:8px}
 nav button.selected{color:#205c3c;font-weight:700}

@@ -673,6 +673,7 @@ onUnmounted(()=>{
       <p>Checking your session…</p>
     </section>
     <form v-else-if="!session" class="step" @submit.prevent="signIn">
+      <img class="app-logo sign-in-logo" src="/askhomeo.svg" alt="AskHomeo" />
       <h1>
         {{ loginMode === "admin" ? "Sign in as administrator" : "Sign in as reviewer" }}
       </h1>
@@ -730,7 +731,7 @@ onUnmounted(()=>{
     </form>
     <template v-else>
       <header>
-        <strong>Source research</strong>
+        <img class="app-logo" src="/askhomeo.svg" alt="AskHomeo" />
         <nav aria-label="Main">
           <button :class="{ selected: tab === 'ask' }" @click="openAskTab">Ask</button
           ><button :class="{ selected: tab === 'papers' }" @click="tab = 'papers'">Find papers</button
