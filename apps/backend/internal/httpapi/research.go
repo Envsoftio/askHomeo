@@ -43,8 +43,8 @@ var quoteWordPattern = regexp.MustCompile(`[\p{L}\p{N}]+`)
 var splitOCRWordPattern = regexp.MustCompile(`-\s*\n\s*`)
 var namedSectionPattern = regexp.MustCompile(`(?i)\b([a-z][a-z-]+)'s\s+([a-z][a-z -]{1,40}?)\s+section\b`)
 
-const answerPromptRevision = "historical-evidence-first-v2"
-const claimPromptRevision = "quote-relevance-v5-heading-quote"
+const answerPromptRevision = "historical-evidence-first-v3-study-coverage"
+const claimPromptRevision = "quote-relevance-v6-source-identity"
 
 func validResearchQuestion(q string) bool {
 	return len(q) <= 1000 && questionTermPattern.MatchString(q)
@@ -494,6 +494,13 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 		return candidates[i].Score > candidates[j].Score
 	})
 	candidates = scopeNamedSections(q, candidates)
+	if studyProtocolComparison(q) {
+		candidates, err = a.prioritizeStudyAnchors(r.Context(), configID, q, candidates)
+		if err != nil {
+			fail(w, 500, "Could not retrieve study outcome and protocol passages.")
+			return
+		}
+	}
 	evidence := selectEvidence(candidates, 10)
 	retrievalDuration := time.Since(researchStarted)
 	a.logAnswerStageFromContext(r.Context(), "retrieval", map[string]any{"search_count": len(searches), "unique_candidate_count": len(candidates), "selected_candidate_count": len(evidence), "embedding_model": modelID, "embedding_config_id": configID}, &retrievalDuration)
@@ -586,6 +593,51 @@ func (a *API) question(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		omittedClaims += recovered
+	}
+	if studyProtocolComparison(q) {
+		missing, auditErr := auditStudyCoverage(checkCtx, q, draft.Answer, evidence, a.Model.Chat)
+		if auditErr != nil {
+			fail(w, 503, "Answer coverage check failed: "+auditErr.Error())
+			return
+		}
+		if len(missing) > 0 {
+			focus := q + "\nAnswer only these missing requested items: " + strings.Join(missing, ", ") + ". Do not repeat facts already answered."
+			addition, additionCites, dropped, draftErr := buildEvidenceFirstDraft(checkCtx, focus, mode, pack.String(), evidence, a.Model.Chat)
+			if draftErr != nil {
+				fail(w, 503, "Answer coverage recovery failed: "+draftErr.Error())
+				return
+			}
+			omittedClaims += dropped
+			if _, ok := validateDraft(addition, additionCites, evidence); ok {
+				checked, checkedLabels, rejected, extraChecks, checkErr := verifyClaimSentencesBatched(checkCtx, q, addition, evidence, a.Model.Chat)
+				if checkErr != nil {
+					fail(w, 503, "Answer coverage recovery check failed: "+checkErr.Error())
+					return
+				}
+				omittedClaims += rejected
+				claimChecks = append(claimChecks, extraChecks...)
+				if checked != "" {
+					draft.Answer = strings.TrimSpace(draft.Answer + " " + checked)
+					labels := map[string]bool{}
+					for _, label := range append(draft.Citations, checkedLabels...) {
+						labels[label] = true
+					}
+					draft.Citations = draft.Citations[:0]
+					for i := range evidence {
+						label := fmt.Sprintf("E%d", i+1)
+						if labels[label] {
+							draft.Citations = append(draft.Citations, label)
+						}
+					}
+				}
+			}
+			missing, auditErr = auditStudyCoverage(checkCtx, q, draft.Answer, evidence, a.Model.Chat)
+			if auditErr != nil {
+				fail(w, 503, "Answer coverage recheck failed: "+auditErr.Error())
+				return
+			}
+			omittedClaims += len(missing)
+		}
 	}
 	used, valid = validateDraft(draft.Answer, draft.Citations, evidence)
 	if !valid {
@@ -962,7 +1014,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 				_, exists := cited[label]
 				if label == "E"+match[1] && !exists {
 					cited[label] = h
-					passages = append(passages, passageInput{ID: label, Text: h.Text, Context: h.RemedyContext})
+					passages = append(passages, passageInput{ID: label, Text: h.Text, Context: h.RemedyContext + sourceIdentityContext(h)})
 				}
 			}
 		}
@@ -977,7 +1029,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 		return "", nil, rejected, checks, nil
 	}
 	requestJSON, _ := json.Marshal(requests)
-	raw, err := chat(ctx, "For each numbered claim, copy one short exact quotation from every cited passage that supports the complete claim and directly answers the question. Return an empty quotes array when support is missing. Do not paraphrase. Return only JSON {\"checks\":[{\"claim\":1,\"quotes\":[{\"id\":\"E1\",\"text\":\"exact words\"}]}]} with one check per claim.", "Question: "+question+"\nClaims and cited passages: "+string(requestJSON))
+	raw, err := chat(ctx, "For each numbered claim, copy one short exact quotation from every cited passage that supports its study facts and directly answers the question. Source title and author in context may establish bibliographic identity only. Return an empty quotes array when passage support for the remaining facts is missing. Do not paraphrase quotations. Return only JSON {\"checks\":[{\"claim\":1,\"quotes\":[{\"id\":\"E1\",\"text\":\"exact words\"}]}]} with one check per claim.", "Question: "+question+"\nClaims and cited passages: "+string(requestJSON))
 	if err != nil {
 		return "", nil, 0, nil, err
 	}
@@ -1032,7 +1084,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 			if len(context) > 120 {
 				context = context[:120]
 			}
-			quotes = append(quotes, passageInput{ID: passage.ID, Text: excerpt, Context: h.RemedyContext + string(context)})
+			quotes = append(quotes, passageInput{ID: passage.ID, Text: excerpt, Context: h.RemedyContext + sourceIdentityContext(h) + string(context)})
 		}
 		if len(quotes) != len(request.Passages) {
 			rejected++
@@ -1044,7 +1096,7 @@ func verifyClaimSentencesBatched(ctx context.Context, question, answer string, h
 		return "", nil, rejected, checks, nil
 	}
 	verdictJSON, _ := json.Marshal(verdictRequests)
-	raw, err = chat(ctx, "Judge each numbered claim against only its exact source quotations. The short context may identify the source section or subject, but factual details must come from the exact quote. Every factual part must be supported and the claim must directly answer the question. Check negation, comparison direction, and named entities. Return only JSON {\"checks\":[{\"claim\":1,\"supported\":true,\"relevant\":true}]} with one verdict per claim.", "Question: "+question+"\nClaims and exact quotations: "+string(verdictJSON))
+	raw, err = chat(ctx, "Judge each numbered claim against its exact source quotations. Source title and author in context may establish bibliographic identity only; study design, treatment, outcomes and results must come from the exact quote. Every factual part must be supported and the claim must directly answer the question. Check negation, comparison direction, and named entities. Return only JSON {\"checks\":[{\"claim\":1,\"supported\":true,\"relevant\":true}]} with one verdict per claim.", "Question: "+question+"\nClaims and exact quotations: "+string(verdictJSON))
 	if err != nil {
 		return "", nil, 0, nil, err
 	}

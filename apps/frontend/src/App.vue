@@ -2659,10 +2659,9 @@ onUnmounted(()=>{
             }}. One-page imports do not establish coverage of an entire work.
           </p>
           <p v-if="omittedClaims" class="verification-note">
-            {{ omittedClaims }}
-            {{ omittedClaims === 1 ? "draft sentence was" : "draft sentences were" }} left
-            out because the source citation could not be verified or the sentence did not
-            answer your question. Only checked sentences appear below.
+            This answer is partial: {{ omittedClaims }}
+            {{ omittedClaims === 1 ? "claim or requested detail could not be verified or completed" : "claims or requested details could not be verified or completed" }}.
+            Check the cited passages before relying on it.
           </p>
           <template v-if="answerStatus !== 'insufficient_evidence' && sections.length">
             <section
