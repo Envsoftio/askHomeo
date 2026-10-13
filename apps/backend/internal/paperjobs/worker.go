@@ -28,9 +28,9 @@ import (
 const PolicyVersion = "paper-acquisition-2"
 
 type Worker struct {
-	Store   *core.Store
-	Client  *scholarly.Client
-	Fetcher *safefetch.Fetcher
+	Store          *core.Store
+	Client         *scholarly.Client
+	Fetcher        *safefetch.Fetcher
 	fetchAlternate func(context.Context, Candidate) ([]byte, string, error)
 }
 type job struct {

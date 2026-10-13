@@ -97,6 +97,10 @@ On **Check pages**, administrators can select any unpublished scan and choose **
 
 Every text page is compared with a fresh 300 DPI OCR pass. Word disagreements, malformed tokens, low word confidence, cropped OCR and failed OCR checks require review; pending checks also appear in the attention list. These checks detect uncertainty, not guaranteed transcription accuracy. Migration 045 queues improved checks for PDFs still in review; published evidence is preserved.
 
+## Code formatting
+
+Run `make format` from the repository root to format the Vue frontend (including its TypeScript and CSS) with Prettier and the Go backend with `gofmt`. Use `make format-vue` or `make format-go` for one side. Install frontend dependencies with `npm ci` in `apps/frontend` first. The recommended VS Code extensions and workspace settings format Vue and Go files on save.
+
 ## Checks
 
 Set `DELETE_TEST_DATABASE_URL` to a disposable database and run `go test ./internal/httpapi -run TestPermanentDelete -v` to verify draft deletion, shared originals, re-import, PDF correction history, storage retry, and publication protection.

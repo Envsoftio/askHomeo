@@ -1,116 +1,699 @@
 <script setup lang="ts">
-import {computed, ref, watch} from 'vue'
-import type {Source} from '../api'
+import { computed, ref, watch } from 'vue'
+import type { Source } from '../api'
 
 export type LibraryGroup = 'ready' | 'processing' | 'attention' | 'unavailable'
-export type LibrarySource = Source & {group: LibraryGroup; state: string}
-const props = defineProps<{sources: LibrarySource[]; canAdd: boolean; loading: boolean; busy: boolean}>()
-const emit = defineEmits<{open: [source: Source]; add: []; remove: [source: Source, reason: string]; purge: [source: Source, confirmation: string]}>()
+export type LibrarySource = Source & { group: LibraryGroup; state: string }
+const props = defineProps<{
+  sources: LibrarySource[]
+  canAdd: boolean
+  loading: boolean
+  busy: boolean
+}>()
+const emit = defineEmits<{
+  open: [source: Source]
+  add: []
+  remove: [source: Source, reason: string]
+  purge: [source: Source, confirmation: string]
+}>()
 const removing = ref<Source | null>(null)
 const removalReason = ref('')
-const deleting=ref<Source|null>(null),deleteTitle=ref(''),showRemoved=ref(false)
-function requestDeletion(source:Source){deleting.value=source;deleteTitle.value='';cancelRemoval()}
-function confirmDeletion(){if(deleting.value&&deleteTitle.value===deleting.value.title){emit('purge',deleting.value,deleteTitle.value);deleting.value=null;deleteTitle.value=''}}
-function cancelRemoval() {removing.value=null; removalReason.value=''}
-function requestRemoval(source: Source) {removing.value=source; removalReason.value=''}
-function confirmRemoval() {if(removing.value&&removalReason.value.trim().length>=8){emit('remove',removing.value,removalReason.value.trim());cancelRemoval()}}
+const deleting = ref<Source | null>(null),
+  deleteTitle = ref(''),
+  showRemoved = ref(false)
+function requestDeletion(source: Source) {
+  deleting.value = source
+  deleteTitle.value = ''
+  cancelRemoval()
+}
+function confirmDeletion() {
+  if (deleting.value && deleteTitle.value === deleting.value.title) {
+    emit('purge', deleting.value, deleteTitle.value)
+    deleting.value = null
+    deleteTitle.value = ''
+  }
+}
+function cancelRemoval() {
+  removing.value = null
+  removalReason.value = ''
+}
+function requestRemoval(source: Source) {
+  removing.value = source
+  removalReason.value = ''
+}
+function confirmRemoval() {
+  if (removing.value && removalReason.value.trim().length >= 8) {
+    emit('remove', removing.value, removalReason.value.trim())
+    cancelRemoval()
+  }
+}
 const search = ref('')
 const filter = ref<LibraryGroup | 'all'>('all')
 const sort = ref('recent')
 const category = ref('all')
-const categories=['materia_medica','repertory','organon_philosophy','therapeutics','provings','clinical_cases','research','other','unclassified']
-const page = ref(1)
-const filters: {id: LibraryGroup | 'all'; label: string}[] = [
-  {id: 'all', label: 'All sources'}, {id: 'attention', label: 'Needs attention'},
-  {id: 'processing', label: 'Processing'}, {id: 'ready', label: 'Ready to ask'},
-  {id: 'unavailable', label: 'Unavailable'},
+const categories = [
+  'materia_medica',
+  'repertory',
+  'organon_philosophy',
+  'therapeutics',
+  'provings',
+  'clinical_cases',
+  'research',
+  'other',
+  'unclassified',
 ]
-const count = (id: string) => props.sources.filter(s => (showRemoved.value || !s.removed) && (id === 'all' || s.group === id)).length
+const page = ref(1)
+const filters: { id: LibraryGroup | 'all'; label: string }[] = [
+  { id: 'all', label: 'All sources' },
+  { id: 'attention', label: 'Needs attention' },
+  { id: 'processing', label: 'Processing' },
+  { id: 'ready', label: 'Ready to ask' },
+  { id: 'unavailable', label: 'Unavailable' },
+]
+const count = (id: string) =>
+  props.sources.filter((s) => (showRemoved.value || !s.removed) && (id === 'all' || s.group === id))
+    .length
 const filtered = computed(() => {
   const query = search.value.trim().toLocaleLowerCase()
-  const rows = props.sources.filter(s => (showRemoved.value || !s.removed) && (filter.value === 'all' || s.group === filter.value) && (category.value==='all'||s.literature_categories.includes(category.value))
-    && (!query || `${s.title} ${s.author}`.toLocaleLowerCase().includes(query)))
-  if (sort.value === 'title') rows.sort((a,b) => a.title.localeCompare(b.title))
-  if (sort.value === 'author') rows.sort((a,b) => a.author.localeCompare(b.author))
+  const rows = props.sources.filter(
+    (s) =>
+      (showRemoved.value || !s.removed) &&
+      (filter.value === 'all' || s.group === filter.value) &&
+      (category.value === 'all' || s.literature_categories.includes(category.value)) &&
+      (!query || `${s.title} ${s.author}`.toLocaleLowerCase().includes(query)),
+  )
+  if (sort.value === 'title') rows.sort((a, b) => a.title.localeCompare(b.title))
+  if (sort.value === 'author') rows.sort((a, b) => a.author.localeCompare(b.author))
   return rows
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / 12)))
 const visible = computed(() => filtered.value.slice((page.value - 1) * 12, page.value * 12))
-watch([search, filter, sort,category,showRemoved], () => {page.value = 1})
-watch(pageCount, total => {page.value = Math.min(page.value, total)})
-function reset() {search.value = ''; filter.value = 'all';category.value='all'}
+watch([search, filter, sort, category, showRemoved], () => {
+  page.value = 1
+})
+watch(pageCount, (total) => {
+  page.value = Math.min(page.value, total)
+})
+function reset() {
+  search.value = ''
+  filter.value = 'all'
+  category.value = 'all'
+}
 </script>
 
 <template>
-  <section class="library" :class="{'library-readonly':!canAdd}" aria-labelledby="library-title" :aria-busy="loading">
-    <div class="library-heading"><div><h2 id="library-title">Source library</h2><p>Original documents and their progress toward becoming searchable.</p></div><span class="total">{{count('all')}} sources</span></div>
+  <section
+    class="library"
+    :class="{ 'library-readonly': !canAdd }"
+    aria-labelledby="library-title"
+    :aria-busy="loading"
+  >
+    <div class="library-heading">
+      <div>
+        <h2 id="library-title">Source library</h2>
+        <p>Original documents and their progress toward becoming searchable.</p>
+      </div>
+      <span class="total">{{ count('all') }} sources</span>
+    </div>
     <div class="library-filters" aria-label="Filter sources by status">
-      <button v-for="item in filters" :key="item.id" :aria-pressed="filter===item.id" @click="filter=item.id">{{item.label}} <span>{{count(item.id)}}</span></button>
-    </div>
-    <label v-if="canAdd" class="removed-toggle"><input v-model="showRemoved" type="checkbox" /> Show removed sources</label>
-    <div class="library-toolbar">
-      <label class="library-search">Search library<input v-model="search" type="search" placeholder="Search by title or author" /></label>
-      <label>Literature<select v-model="category"><option value="all">All categories</option><option v-for="value in categories" :key="value" :value="value">{{value.replaceAll('_',' ')}}</option></select></label>
-      <label>Sort by<select v-model="sort"><option value="recent">Recently added</option><option value="title">Title A–Z</option><option value="author">Author A–Z</option></select></label>
-    </div>
-    <p v-if="loading&&!sources.length" class="library-empty" role="status">Loading your source library…</p>
-    <div v-else-if="!sources.length" class="library-empty"><span class="empty-symbol" aria-hidden="true">＋</span><h3>Build your research library</h3><p>Add a book or paper. We’ll read the pages and show you what needs checking.</p><button v-if="canAdd" class="primary-button" @click="emit('add')">Add your first source</button><p v-else>An administrator can add sources to the shared library.</p></div>
-    <div v-else-if="!filtered.length" class="library-empty"><h3>No matching sources</h3><p>Try another title, author or status.</p><button @click="reset">Clear filters</button></div>
-    <template v-else>
-      <div class="library-columns" aria-hidden="true"><span>Document</span><span>Status</span><span v-if="canAdd">Actions</span></div>
-      <div v-for="source in visible" :key="source.id" class="library-item">
-      <button class="library-row" @click="emit('open',source)">
-        <span class="document-info"><span class="document-icon" aria-hidden="true">▤</span><span><strong>{{source.title}}</strong><small>{{source.author||'Author not recorded'}} · {{source.document_format.toUpperCase()}}<template v-if="source.document_format==='pdf'&&source.pages_total"> · {{source.pages_total}} pages</template></small><small>{{source.literature_categories.join(', ').replaceAll('_',' ')}} · {{source.evidence_category.replaceAll('_',' ')}}</small><small v-if="source.supersedes_source_id">Reprocessed edition</small></span></span>
-        <span class="document-status"><span class="status-badge" :class="source.group">{{source.state}}</span><progress v-if="source.status==='processing'&&source.pages_total" :value="source.pages_read" :max="source.pages_total" :aria-label="`${source.title}: pages read`" /><span class="row-action">{{source.group==='attention'?'Review source':source.group==='processing'?'View progress':'View source'}} <span aria-hidden="true">↗</span></span></span>
+      <button
+        v-for="item in filters"
+        :key="item.id"
+        :aria-pressed="filter === item.id"
+        @click="filter = item.id"
+      >
+        {{ item.label }} <span>{{ count(item.id) }}</span>
       </button>
-      <div v-if="canAdd" class="source-delete-actions"><button v-if="!source.removed" class="remove-source" type="button" :disabled="busy" :aria-label="`Remove ${source.title} from library`" @click="requestRemoval(source)">Remove</button><button class="remove-source" type="button" :disabled="busy" :aria-label="`Permanently delete ${source.title}`" @click="requestDeletion(source)">Delete permanently</button><small v-if="source.removed">Removed from library</small></div>
-      <div v-if="deleting?.id===source.id" class="removal-confirmation" role="region" aria-label="Permanent deletion confirmation">
-        <strong>Permanently delete “{{source.title}}”?</strong>
-        <p v-if="source.deletion_blocker">{{source.deletion_blocker}}</p>
-        <template v-else>
-          <p>This cannot be undone. Extracted text, corrections, passages and source records will be deleted. Original files are permanently erased when no other source or collection uses them. Storage cleanup may finish in the background. You can import the document again afterward.</p>
-          <label>Type the exact title to confirm<input v-model="deleteTitle" autocomplete="off" /></label>
-          <button type="button" :disabled="busy || deleteTitle!==source.title" @click="confirmDeletion">Permanently delete source and files</button>
-        </template>
-        <button type="button" @click="deleting=null">Cancel</button>
+    </div>
+    <label v-if="canAdd" class="removed-toggle"
+      ><input v-model="showRemoved" type="checkbox" /> Show removed sources</label
+    >
+    <div class="library-toolbar">
+      <label class="library-search"
+        >Search library<input
+          v-model="search"
+          type="search"
+          placeholder="Search by title or author"
+      /></label>
+      <label
+        >Literature<select v-model="category">
+          <option value="all">All categories</option>
+          <option v-for="value in categories" :key="value" :value="value">
+            {{ value.replaceAll('_', ' ') }}
+          </option>
+        </select></label
+      >
+      <label
+        >Sort by<select v-model="sort">
+          <option value="recent">Recently added</option>
+          <option value="title">Title A–Z</option>
+          <option value="author">Author A–Z</option>
+        </select></label
+      >
+    </div>
+    <p v-if="loading && !sources.length" class="library-empty" role="status">
+      Loading your source library…
+    </p>
+    <div v-else-if="!sources.length" class="library-empty">
+      <span class="empty-symbol" aria-hidden="true">＋</span>
+      <h3>Build your research library</h3>
+      <p>Add a book or paper. We’ll read the pages and show you what needs checking.</p>
+      <button v-if="canAdd" class="primary-button" @click="emit('add')">
+        Add your first source
+      </button>
+      <p v-else>An administrator can add sources to the shared library.</p>
+    </div>
+    <div v-else-if="!filtered.length" class="library-empty">
+      <h3>No matching sources</h3>
+      <p>Try another title, author or status.</p>
+      <button @click="reset">Clear filters</button>
+    </div>
+    <template v-else>
+      <div class="library-columns" aria-hidden="true">
+        <span>Document</span><span>Status</span><span v-if="canAdd">Actions</span>
       </div>
-      <div v-if="removing?.id===source.id" class="removal-confirmation">
-        <strong>Remove “{{source.title}}”?</strong>
-        <p>It will disappear from this library and future answers. Existing citations will become unavailable. The original {{source.document_format.toUpperCase()}} and extracted data are retained as an audit record; this action does not erase the file.</p>
-        <label>Reason for removal<textarea v-model="removalReason" rows="2" minlength="8" maxlength="1000" placeholder="At least 8 characters" /></label>
-        <div><button type="button" :disabled="busy || removalReason.trim().length<8" @click="confirmRemoval">Remove source</button><button type="button" @click="cancelRemoval">Cancel</button></div>
+      <div v-for="source in visible" :key="source.id" class="library-item">
+        <button class="library-row" @click="emit('open', source)">
+          <span class="document-info"
+            ><span class="document-icon" aria-hidden="true">▤</span
+            ><span
+              ><strong>{{ source.title }}</strong
+              ><small
+                >{{ source.author || 'Author not recorded' }} ·
+                {{ source.document_format.toUpperCase()
+                }}<template v-if="source.document_format === 'pdf' && source.pages_total">
+                  · {{ source.pages_total }} pages</template
+                ></small
+              ><small
+                >{{ source.literature_categories.join(', ').replaceAll('_', ' ') }} ·
+                {{ source.evidence_category.replaceAll('_', ' ') }}</small
+              ><small v-if="source.supersedes_source_id">Reprocessed edition</small></span
+            ></span
+          >
+          <span class="document-status"
+            ><span class="status-badge" :class="source.group">{{ source.state }}</span
+            ><progress
+              v-if="source.status === 'processing' && source.pages_total"
+              :value="source.pages_read"
+              :max="source.pages_total"
+              :aria-label="`${source.title}: pages read`"
+            /><span class="row-action"
+              >{{
+                source.group === 'attention'
+                  ? 'Review source'
+                  : source.group === 'processing'
+                    ? 'View progress'
+                    : 'View source'
+              }}
+              <span aria-hidden="true">↗</span></span
+            ></span
+          >
+        </button>
+        <div v-if="canAdd" class="source-delete-actions">
+          <button
+            v-if="!source.removed"
+            class="remove-source"
+            type="button"
+            :disabled="busy"
+            :aria-label="`Remove ${source.title} from library`"
+            @click="requestRemoval(source)"
+          >
+            Remove</button
+          ><button
+            class="remove-source"
+            type="button"
+            :disabled="busy"
+            :aria-label="`Permanently delete ${source.title}`"
+            @click="requestDeletion(source)"
+          >
+            Delete permanently</button
+          ><small v-if="source.removed">Removed from library</small>
+        </div>
+        <div
+          v-if="deleting?.id === source.id"
+          class="removal-confirmation"
+          role="region"
+          aria-label="Permanent deletion confirmation"
+        >
+          <strong>Permanently delete “{{ source.title }}”?</strong>
+          <p v-if="source.deletion_blocker">{{ source.deletion_blocker }}</p>
+          <template v-else>
+            <p>
+              This cannot be undone. Extracted text, corrections, passages and source records will
+              be deleted. Original files are permanently erased when no other source or collection
+              uses them. Storage cleanup may finish in the background. You can import the document
+              again afterward.
+            </p>
+            <label
+              >Type the exact title to confirm<input v-model="deleteTitle" autocomplete="off"
+            /></label>
+            <button
+              type="button"
+              :disabled="busy || deleteTitle !== source.title"
+              @click="confirmDeletion"
+            >
+              Permanently delete source and files
+            </button>
+          </template>
+          <button type="button" @click="deleting = null">Cancel</button>
+        </div>
+        <div v-if="removing?.id === source.id" class="removal-confirmation">
+          <strong>Remove “{{ source.title }}”?</strong>
+          <p>
+            It will disappear from this library and future answers. Existing citations will become
+            unavailable. The original {{ source.document_format.toUpperCase() }} and extracted data
+            are retained as an audit record; this action does not erase the file.
+          </p>
+          <label
+            >Reason for removal<textarea
+              v-model="removalReason"
+              rows="2"
+              minlength="8"
+              maxlength="1000"
+              placeholder="At least 8 characters"
+            />
+          </label>
+          <div>
+            <button
+              type="button"
+              :disabled="busy || removalReason.trim().length < 8"
+              @click="confirmRemoval"
+            >
+              Remove source</button
+            ><button type="button" @click="cancelRemoval">Cancel</button>
+          </div>
+        </div>
       </div>
+      <div class="library-footer">
+        <span role="status"
+          >{{ (page - 1) * 12 + 1 }}–{{ Math.min(page * 12, filtered.length) }} of
+          {{ filtered.length }} sources</span
+        >
+        <div>
+          <button :disabled="page === 1" aria-label="Previous source page" @click="page--">
+            Previous</button
+          ><button :disabled="page >= pageCount" aria-label="Next source page" @click="page++">
+            Next
+          </button>
+        </div>
       </div>
-      <div class="library-footer"><span role="status">{{(page-1)*12+1}}–{{Math.min(page*12,filtered.length)}} of {{filtered.length}} sources</span><div><button :disabled="page===1" aria-label="Previous source page" @click="page--">Previous</button><button :disabled="page>=pageCount" aria-label="Next source page" @click="page++">Next</button></div></div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.removed-toggle{display:block;padding:1rem 1.5rem}.source-delete-actions{display:grid;gap:.5rem}.source-delete-actions small{margin-right:1.5rem}.library{border:1px solid #dce4df;border-radius:14px;background:#fff;overflow:hidden;margin:1.5rem 0}
-.listing-limit{margin:0;padding:0 1.5rem 1rem;color:#68776f;font-size:.8rem}
-.library-heading{display:flex;align-items:center;justify-content:space-between;padding:1.4rem 1.5rem;gap:1rem}.library-heading h2{margin:0;font-size:1.15rem}.library-heading p{margin:.4rem 0 0;color:#68776f;font-size:.9rem}.total{white-space:nowrap;color:#68776f;font-size:.85rem}
-.library-filters{display:flex;gap:1rem;padding:0 1.5rem;overflow:auto;border-bottom:1px solid #e5eae7}.library-filters button{white-space:nowrap;border:0;border-radius:0;background:none;padding:.8rem 0;color:#68776f;border-bottom:2px solid transparent}.library-filters button[aria-pressed=true]{color:#19583e;border-bottom-color:#23754f;font-weight:600}.library-filters span{display:inline-block;margin-left:.25rem;background:#eff3f0;padding:.1rem .4rem;border-radius:5px;font-size:.75rem}
-.library-toolbar{display:flex;align-items:end;gap:1rem;padding:1.2rem 1.5rem}.library-toolbar label{font-size:.8rem;font-weight:600;color:#596962}.library-toolbar input,.library-toolbar select{display:block;margin-top:.4rem;font-weight:400;min-height:42px}.library-search{flex:1}.library-search input{width:100%;max-width:440px}
-.library-columns,.library-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(160px,.55fr) 115px;gap:1.5rem;align-items:center;padding:1rem 1.5rem}.library-columns{background:#f7f9f7;border-block:1px solid #e5eae7;color:#748078;font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.08em;padding-block:.7rem}.library-item{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;border-bottom:1px solid #edf0ee}.library-row{width:100%;border:0;border-radius:0;text-align:left;background:#fff;padding-right:0}.library-row:hover{background:#f7faf8}.remove-source{margin-right:1.5rem;font-size:.78rem;color:#9b3232;border-color:#efd3d3;background:#fff}.removal-confirmation{grid-column:1/-1;padding:1rem 1.5rem;background:#fff9f6;border-top:1px solid #efd3d3}.removal-confirmation p{max-width:75ch;font-size:.85rem;line-height:1.5}.removal-confirmation label{display:block;max-width:600px;font-size:.85rem}.removal-confirmation textarea{display:block;width:100%;margin:.4rem 0}.removal-confirmation div{display:flex;gap:.5rem}.document-info{display:flex;gap:.9rem;align-items:center;min-width:0}.document-info>span:last-child{min-width:0}.document-info strong{font-size:.93rem;line-height:1.5;display:block;overflow-wrap:anywhere}.document-info small{display:block;margin-top:.3rem;color:#748078;font-size:.8rem}.document-icon{display:grid;place-items:center;width:38px;height:46px;flex-shrink:0;background:#eff4f0;border:1px solid #dee7e0;border-radius:6px;font-size:1.4rem;color:#52755d}.document-status{display:grid;gap:.5rem;justify-items:start}.status-badge{font-size:.75rem;line-height:1.45;border-radius:6px;padding:.3rem .5rem;background:#edf1ee;color:#657169}.status-badge.ready{background:#e8f4ec;color:#226141}.status-badge.attention{background:#fff2dc;color:#895717}.status-badge.processing{background:#edf2ff;color:#496396}.row-action{font-size:.8rem;font-weight:600;color:#35684d}.row-action span{margin-left:.3rem}progress{width:100%;max-width:150px;height:5px;accent-color:#547b61}.library-empty{text-align:center;padding:3.5rem 1.5rem;color:#68776f}.library-empty h3{color:#263d30;margin-top:1rem}.library-empty p{line-height:1.6}.empty-symbol{font-size:1.7rem;display:inline-grid;place-items:center;border-radius:12px;background:#eff5f0;width:54px;height:54px;color:#52755d}.library-footer{display:flex;align-items:center;justify-content:space-between;padding:1rem 1.5rem;font-size:.8rem;color:#748078;gap:1rem}.library-footer button{font-size:.8rem;margin-left:.4rem}
-@media(max-width:700px){.library-heading,.library-toolbar,.library-row,.library-footer{padding-inline:1rem}.library-heading{align-items:start}.library-heading p{max-width:28ch}.library-filters{padding-inline:1rem}.library-toolbar{flex-wrap:wrap}.library-search{flex-basis:100%}.library-search input{max-width:none}.library-columns{display:none}.library-row{grid-template-columns:1fr;gap:.7rem}.document-status{padding-left:53px}.row-action{padding-left:53px}.remove-source{margin-right:1rem}.library-footer{flex-wrap:wrap}.total{display:none}}
-.library-columns{grid-template-columns:minmax(0,1fr) 190px 170px}
-.library-item{grid-template-columns:minmax(0,1fr) 170px;align-items:stretch}
-.library-readonly .library-columns,.library-readonly .library-item{grid-template-columns:minmax(0,1fr) 190px}
-.library-row{grid-template-columns:minmax(0,1fr) 190px;gap:1rem;padding-right:1rem;min-width:0}
-.source-delete-actions{display:flex;flex-direction:column;justify-content:center;align-items:stretch;gap:.45rem;padding:.7rem 1.25rem .7rem .25rem}
-.source-delete-actions .remove-source{margin:0;white-space:normal;text-align:center;min-height:34px}
-.document-status{min-width:0}
-.status-badge{max-width:100%;overflow-wrap:anywhere}
-.row-action{line-height:1.35}
-@media(max-width:700px){
-  .library-item,.library-readonly .library-item{grid-template-columns:1fr}
-  .library-row{grid-template-columns:1fr;padding-bottom:.5rem}
-  .document-status{padding-left:53px}
-  .row-action{padding-left:0}
-  .source-delete-actions{flex-direction:row;justify-content:flex-start;flex-wrap:wrap;padding:.2rem 1rem 1rem 4.3rem}
-  .source-delete-actions .remove-source{padding:.4rem .6rem}
-  .library-toolbar>label:not(.library-search){flex:1;min-width:125px}
-  .library-toolbar select{width:100%}
+.removed-toggle {
+  display: block;
+  padding: 1rem 1.5rem;
+}
+.source-delete-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+.source-delete-actions small {
+  margin-right: 1.5rem;
+}
+.library {
+  border: 1px solid #dce4df;
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+  margin: 1.5rem 0;
+}
+.listing-limit {
+  margin: 0;
+  padding: 0 1.5rem 1rem;
+  color: #68776f;
+  font-size: 0.8rem;
+}
+.library-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.4rem 1.5rem;
+  gap: 1rem;
+}
+.library-heading h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+.library-heading p {
+  margin: 0.4rem 0 0;
+  color: #68776f;
+  font-size: 0.9rem;
+}
+.total {
+  white-space: nowrap;
+  color: #68776f;
+  font-size: 0.85rem;
+}
+.library-filters {
+  display: flex;
+  gap: 1rem;
+  padding: 0 1.5rem;
+  overflow: auto;
+  border-bottom: 1px solid #e5eae7;
+}
+.library-filters button {
+  white-space: nowrap;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  padding: 0.8rem 0;
+  color: #68776f;
+  border-bottom: 2px solid transparent;
+}
+.library-filters button[aria-pressed='true'] {
+  color: #19583e;
+  border-bottom-color: #23754f;
+  font-weight: 600;
+}
+.library-filters span {
+  display: inline-block;
+  margin-left: 0.25rem;
+  background: #eff3f0;
+  padding: 0.1rem 0.4rem;
+  border-radius: 5px;
+  font-size: 0.75rem;
+}
+.library-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 1rem;
+  padding: 1.2rem 1.5rem;
+}
+.library-toolbar label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #596962;
+}
+.library-toolbar input,
+.library-toolbar select {
+  display: block;
+  margin-top: 0.4rem;
+  font-weight: 400;
+  min-height: 42px;
+}
+.library-search {
+  flex: 1;
+}
+.library-search input {
+  width: 100%;
+  max-width: 440px;
+}
+.library-columns,
+.library-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.55fr) 115px;
+  gap: 1.5rem;
+  align-items: center;
+  padding: 1rem 1.5rem;
+}
+.library-columns {
+  background: #f7f9f7;
+  border-block: 1px solid #e5eae7;
+  color: #748078;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-block: 0.7rem;
+}
+.library-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-bottom: 1px solid #edf0ee;
+}
+.library-row {
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  text-align: left;
+  background: #fff;
+  padding-right: 0;
+}
+.library-row:hover {
+  background: #f7faf8;
+}
+.remove-source {
+  margin-right: 1.5rem;
+  font-size: 0.78rem;
+  color: #9b3232;
+  border-color: #efd3d3;
+  background: #fff;
+}
+.removal-confirmation {
+  grid-column: 1/-1;
+  padding: 1rem 1.5rem;
+  background: #fff9f6;
+  border-top: 1px solid #efd3d3;
+}
+.removal-confirmation p {
+  max-width: 75ch;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.removal-confirmation label {
+  display: block;
+  max-width: 600px;
+  font-size: 0.85rem;
+}
+.removal-confirmation textarea {
+  display: block;
+  width: 100%;
+  margin: 0.4rem 0;
+}
+.removal-confirmation div {
+  display: flex;
+  gap: 0.5rem;
+}
+.document-info {
+  display: flex;
+  gap: 0.9rem;
+  align-items: center;
+  min-width: 0;
+}
+.document-info > span:last-child {
+  min-width: 0;
+}
+.document-info strong {
+  font-size: 0.93rem;
+  line-height: 1.5;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.document-info small {
+  display: block;
+  margin-top: 0.3rem;
+  color: #748078;
+  font-size: 0.8rem;
+}
+.document-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 46px;
+  flex-shrink: 0;
+  background: #eff4f0;
+  border: 1px solid #dee7e0;
+  border-radius: 6px;
+  font-size: 1.4rem;
+  color: #52755d;
+}
+.document-status {
+  display: grid;
+  gap: 0.5rem;
+  justify-items: start;
+}
+.status-badge {
+  font-size: 0.75rem;
+  line-height: 1.45;
+  border-radius: 6px;
+  padding: 0.3rem 0.5rem;
+  background: #edf1ee;
+  color: #657169;
+}
+.status-badge.ready {
+  background: #e8f4ec;
+  color: #226141;
+}
+.status-badge.attention {
+  background: #fff2dc;
+  color: #895717;
+}
+.status-badge.processing {
+  background: #edf2ff;
+  color: #496396;
+}
+.row-action {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #35684d;
+}
+.row-action span {
+  margin-left: 0.3rem;
+}
+progress {
+  width: 100%;
+  max-width: 150px;
+  height: 5px;
+  accent-color: #547b61;
+}
+.library-empty {
+  text-align: center;
+  padding: 3.5rem 1.5rem;
+  color: #68776f;
+}
+.library-empty h3 {
+  color: #263d30;
+  margin-top: 1rem;
+}
+.library-empty p {
+  line-height: 1.6;
+}
+.empty-symbol {
+  font-size: 1.7rem;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #eff5f0;
+  width: 54px;
+  height: 54px;
+  color: #52755d;
+}
+.library-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  font-size: 0.8rem;
+  color: #748078;
+  gap: 1rem;
+}
+.library-footer button {
+  font-size: 0.8rem;
+  margin-left: 0.4rem;
+}
+@media (max-width: 700px) {
+  .library-heading,
+  .library-toolbar,
+  .library-row,
+  .library-footer {
+    padding-inline: 1rem;
+  }
+  .library-heading {
+    align-items: start;
+  }
+  .library-heading p {
+    max-width: 28ch;
+  }
+  .library-filters {
+    padding-inline: 1rem;
+  }
+  .library-toolbar {
+    flex-wrap: wrap;
+  }
+  .library-search {
+    flex-basis: 100%;
+  }
+  .library-search input {
+    max-width: none;
+  }
+  .library-columns {
+    display: none;
+  }
+  .library-row {
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+  }
+  .document-status {
+    padding-left: 53px;
+  }
+  .row-action {
+    padding-left: 53px;
+  }
+  .remove-source {
+    margin-right: 1rem;
+  }
+  .library-footer {
+    flex-wrap: wrap;
+  }
+  .total {
+    display: none;
+  }
+}
+.library-columns {
+  grid-template-columns: minmax(0, 1fr) 190px 170px;
+}
+.library-item {
+  grid-template-columns: minmax(0, 1fr) 170px;
+  align-items: stretch;
+}
+.library-readonly .library-columns,
+.library-readonly .library-item {
+  grid-template-columns: minmax(0, 1fr) 190px;
+}
+.library-row {
+  grid-template-columns: minmax(0, 1fr) 190px;
+  gap: 1rem;
+  padding-right: 1rem;
+  min-width: 0;
+}
+.source-delete-actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 0.45rem;
+  padding: 0.7rem 1.25rem 0.7rem 0.25rem;
+}
+.source-delete-actions .remove-source {
+  margin: 0;
+  white-space: normal;
+  text-align: center;
+  min-height: 34px;
+}
+.document-status {
+  min-width: 0;
+}
+.status-badge {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.row-action {
+  line-height: 1.35;
+}
+@media (max-width: 700px) {
+  .library-item,
+  .library-readonly .library-item {
+    grid-template-columns: 1fr;
+  }
+  .library-row {
+    grid-template-columns: 1fr;
+    padding-bottom: 0.5rem;
+  }
+  .document-status {
+    padding-left: 53px;
+  }
+  .row-action {
+    padding-left: 0;
+  }
+  .source-delete-actions {
+    flex-direction: row;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    padding: 0.2rem 1rem 1rem 4.3rem;
+  }
+  .source-delete-actions .remove-source {
+    padding: 0.4rem 0.6rem;
+  }
+  .library-toolbar > label:not(.library-search) {
+    flex: 1;
+    min-width: 125px;
+  }
+  .library-toolbar select {
+    width: 100%;
+  }
 }
 </style>

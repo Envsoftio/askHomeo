@@ -40,8 +40,8 @@ func TestDOIAlternateCopyAcquisitionIntegration(t *testing.T) {
 	pdf := makeArticlePDF(t)
 	fixtures := []struct {
 		name, doi, format string
-		raw []byte
-		want string
+		raw               []byte
+		want              string
 	}{
 		{"html", "10.1234/html.01", "html", makeHTML("10.1234/html.01"), "review"},
 		{"pdf", "10.1234/trial.01", "pdf", pdf, "review"},

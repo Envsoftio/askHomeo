@@ -96,7 +96,13 @@ func TestPMCAndUnpaywallContracts(t *testing.T) {
 	}
 }
 
-func TestProviderRetryAfterIsTyped(t *testing.T){
- c:=&Client{PubMedBase:"https://provider.test",HTTP:&http.Client{Transport:roundTrip(func(*http.Request)(*http.Response,error){return &http.Response{StatusCode:429,Header:http.Header{"Retry-After":[]string{"7"}},Body:io.NopCloser(strings.NewReader("busy"))},nil})}}
- _,err:=c.SearchPubMed(context.Background(),"trial",0,1);var providerErr *ProviderError;if !errors.As(err,&providerErr)||providerErr.Status!=429||providerErr.RetryAfter.Seconds()!=7 {t.Fatalf("retry contract %v",err)}
+func TestProviderRetryAfterIsTyped(t *testing.T) {
+	c := &Client{PubMedBase: "https://provider.test", HTTP: &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"7"}}, Body: io.NopCloser(strings.NewReader("busy"))}, nil
+	})}}
+	_, err := c.SearchPubMed(context.Background(), "trial", 0, 1)
+	var providerErr *ProviderError
+	if !errors.As(err, &providerErr) || providerErr.Status != 429 || providerErr.RetryAfter.Seconds() != 7 {
+		t.Fatalf("retry contract %v", err)
+	}
 }

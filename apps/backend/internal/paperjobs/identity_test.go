@@ -14,7 +14,7 @@ import (
 func TestAlternateCopyCandidateAndHTMLIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		license, version string
-		eligible bool
+		eligible         bool
 	}{{"cc-by", "publishedVersion", true}, {"cc0", "acceptedVersion", true}, {"cc-by-nc", "publishedVersion", false}, {"cc-by", "unknown", false}} {
 		_, eligible := CandidateFromLocation(scholarly.Location{URL: "https://journal.example/article.pdf", Format: "pdf", License: tc.license, Version: tc.version})
 		if eligible != tc.eligible {
